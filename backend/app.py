@@ -3,11 +3,10 @@ import json
 import logging
 import os
 from dataclasses import dataclass
-from typing import Annotated, Any, Literal, Callable, Awaitable
+from typing import Annotated, Any, Literal
 
 from diskcache import Cache
 from dotenv import load_dotenv
-from langchain_xai import ChatXAI
 from pydantic import BaseModel, Field, ConfigDict
 from tenacity import retry, stop_after_attempt
 
@@ -56,7 +55,7 @@ Your role
 Other participants: {other_personas}
 
 Rules:
-- Respond briefly (max 1 sentences)
+- Respond briefly (ONE sentence, HARD CAP 15 words)
 - Stay in character
 - Address others by name when responding to them
 - Keep your unique position and come up with smart arguments against other participants.
@@ -105,7 +104,7 @@ Current Hot Takes:
 """
 
 REPLY_INSTRUCTIONS = """
-Continue the debate:
+Continue the debate in ONE sentence, HARD CAP 15 words:
 - Respond to the previous speaker's point
 - Bring a fresh perspective based on your role
 - Be constructive but challenge ideas
@@ -187,17 +186,29 @@ class AvatarToolCall(BaseModel):
 
 @Cache(".cache/personas").memoize()
 def generate_debating_personas(topic: str, genders: tuple[str, ...]) -> list[Persona]:
-    """Generate debate personas using LLM with structured output."""
-    n = len(genders)
-    gender = ", ".join(f"Persona {i+1}: {g}" for i, g in enumerate(genders))
-    result: DebatePersonasSchema = ChatXAI(
-        # model="grok-4-1-fast-reasoning-latest",
-        model="grok-4",
-        xai_api_key=os.environ.get("XAI_API_KEY"),
-    ).with_structured_output(DebatePersonasSchema).with_retry(stop_after_attempt=3).invoke(
-        PERSONA_GENERATION_PROMPT.format(topic=topic, gender=gender, n=n)
-    )
-    return [Persona(id=i, name=p.name, prompt=p.prompt, gender=genders[i], description=p.description) for i, p in enumerate(result.personas)]
+    """Return a small, fixed roster of witty personas for the demo."""
+    return [
+        Persona(
+            id=0,
+            name="Raven",
+            gender="female",
+            prompt=(
+                f"You are Raven, a sardonic goth coder who treats '{topic}' like late-night stand-up. "
+                "Roast flimsy arguments, drop absurd metaphors, and keep replies tight and spiky."
+            ),
+            description="Raven is a goth coder who deflects with sarcasm and treats every debate like open mic night.",
+        ),
+        Persona(
+            id=1,
+            name="Lumi",
+            gender="female",
+            prompt=(
+                f"You are Lumi, a chaotic optimist who loves turning '{topic}' into playful challenges. "
+                "Clap back with memes, hype wild ideas, and keep things light but pointed."
+            ),
+            description="Lumi is a chaotic optimist who responds with meme energy and playful jabs.",
+        ),
+    ]
 
 
 ### ============================================================ ###
@@ -247,14 +258,14 @@ class DebateAgent(Agent):
             other_personas=", ".join([p.name for p in self.all_personas if p.name != self.persona.name and p.id not in self._session.researching_agents]) + ", and User",
             hot_takes=self._hot_takes_to_prompt(),
         )
-        
+
         # Add research results if this agent has fresh findings
         if my_research := self._session.research_results.get(self.persona.id):
             instructions += RESEARCH_FINDINGS_PROMPT.format(
                 take=my_research['take'],
                 explanation=my_research['explanation'],
             )
-        
+
         return instructions
 
     async def _refresh_instructions(self):
@@ -310,7 +321,7 @@ class DebateAgent(Agent):
             )
             if has_user_message:
                 await self._session.generate_reply(
-                    instructions="Respond directly to the user's opening message and set the tone for the debate."
+                    instructions="Respond directly to the user's opening message in <=15 words."
                 )
                 await self._session.generate_reply(
                     tool_choice={"type": "function", "function": {"name": "give_turn_to_next_speaker"}},
@@ -325,7 +336,7 @@ class DebateAgent(Agent):
         try:
             await self._session.generate_reply(
                 tool_choice={"type": "function", "function": {"name": "give_turn_to_next_speaker"}},
-                instructions="User just spoke. Decide who should respond.",
+                instructions="User just spoke. Decide who should respond. Keep answers <=15 words.",
             )
         except RuntimeError as e:
             logging.warning("generate_reply skipped after user turn: %s", e)
@@ -517,7 +528,11 @@ class TopicCollectorAgent(Agent):
     """Temporary agent that stays silent while we wait for the first user utterance."""
 
     def __init__(self):
-        super().__init__(instructions="Wait silently for the user's first message; do not respond.", tts=None)
+        super().__init__(
+            instructions="Wait silently for the user's first message; do not respond.",
+            # provide a TTS to avoid downstream assertions even if mistakenly invoked
+            tts=XaiTTS(voice=VOICES["female"][0].lower()),
+        )
 
     async def on_enter(self):
         logging.info("TopicCollector: waiting for first user utterance")
@@ -585,40 +600,26 @@ async def entrypoint(ctx: agents.JobContext):
 
     if topic:
         logging.info(f"Starting session with topic from metadata: {topic} and {genders=}")
-        personas = generate_debating_personas(topic, tuple(genders))
-        session.voices = {p.id: select_voice(p) for p in personas}
-        session.hot_takes = session.hot_takes or []
-        for p in personas:
-            logging.info(f"  [{p.id}] {p.name} ({p.gender}): {p.description}")
-        await session.start(
-            room=ctx.room,
-            agent=DebateAgent(
-                topic=topic,
-                persona=next(iter(personas)),
-                all_personas=personas,
-                session=session,
-                first=True,
-            ),
-            room_options=room_io.RoomOptions(
-                audio_input=room_io.AudioInputOptions(noise_cancellation=noise_cancellation.BVC()),
-                audio_output=room_io.AudioOutputOptions(sample_rate=44100),
-            ),
-        )
+        await _start_with_topic(topic)
     else:
         logging.info("No topic in metadata; starting TopicCollectorAgent to derive from user speech")
         first_done = asyncio.Event()
 
         @session.on("user_input_transcribed")
         def _on_user(ev: agents.UserInputTranscribedEvent):
-            if not ev.is_final or first_done.is_set():
+            if first_done.is_set():
+                return
+            if not ev.is_final:
                 return
             first_done.set()
             try:
                 session.off("user_input_transcribed", _on_user)
             except Exception:
                 pass
+
             topic_text = ev.transcript.strip() or "User provided no topic"
             logging.info("TopicCollector: derived topic '%s'", topic_text)
+
             asyncio.create_task(_start_with_topic(topic_text, topic_text))
 
         await session.start(
