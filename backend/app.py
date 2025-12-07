@@ -1,3 +1,4 @@
+import asyncio
 import json
 import logging
 import os
@@ -46,6 +47,9 @@ Rules:
 - Stay in character
 - Address others by name when responding to them
 - Keep your unique position and come up with smart arguments against other participants.
+- To animate the avatars, call the function tool `avatar_tool` only with supported expressions:
+  * setExpression preset: "smile", "surprised", "concerned", "wink", or "laugh"
+  * Include context.avatarId as "assistant" or "local"
 
 ## User interaction
 React emotionally to user's messages:
@@ -114,6 +118,18 @@ class DebatePersonasSchema(BaseModel):
     personas: list[PersonaSchema] = Field(description="List of debate personas")
 
 
+class AvatarToolCall(BaseModel):
+    """LLM → UI animation instruction."""
+    type: str = Field(description="Tool type, e.g., setExpression, setPose, setGaze")
+    preset: str | None = Field(default=None, description="Expression preset when type is setExpression")
+    context: dict[str, Any] | None = Field(
+        default=None, description='Optional targeting, e.g., {"avatarId": "assistant" | "local"}'
+    )
+
+    class Config:
+        extra = "allow"
+
+
 
 
 @Cache(".cache/personas").memoize()
@@ -135,6 +151,16 @@ def generate_debating_personas(topic: str, genders: tuple[str, ...]) -> list[Per
 
 
 class DebateAgent(Agent):
+    SUPPORTED_AVATAR_IDS = {"assistant", "local"}
+    SUPPORTED_EXPRESSIONS = {"smile", "surprised", "concerned", "wink", "laugh"}
+    EXPRESSION_SYNONYMS = {
+        "happy": "smile",
+        "serious": "concerned",
+        "sad": "concerned",
+        "frown": "concerned",
+        "blink": "wink",
+        "winking": "wink",
+    }
     def __init__(
         self,
         topic: str,
@@ -196,23 +222,29 @@ class DebateAgent(Agent):
 
         await self.update_chat_ctx(self._reformat_history(self._session.history))
         print(self.chat_ctx.items)
-        if self.first:
-            await self._session.generate_reply(
-                instructions=f"Introduce yourself briefly and share your opening position on: {self.topic}"
-            )
-        else:
-            await self._session.generate_reply(instructions=REPLY_INSTRUCTIONS)
+        try:
+            if self.first:
+                await self._session.generate_reply(
+                    instructions=f"Introduce yourself briefly and share your opening position on: {self.topic}"
+                )
+            else:
+                await self._session.generate_reply(instructions=REPLY_INSTRUCTIONS)
 
-        await self._session.generate_reply(
-            tool_choice={"type": "function", "function": {"name": "give_turn_to_next_speaker"}},
-            instructions="Now decide who should speak next.",
-        )
+            await self._session.generate_reply(
+                tool_choice={"type": "function", "function": {"name": "give_turn_to_next_speaker"}},
+                instructions="Now decide who should speak next.",
+            )
+        except RuntimeError as e:
+            logging.warning("generate_reply skipped (agent not running): %s", e)
 
     async def on_user_turn_completed(self, turn_ctx, new_message):
-        await self._session.generate_reply(
-            tool_choice={"type": "function", "function": {"name": "give_turn_to_next_speaker"}},
-            instructions="User just spoke. Decide who should respond.",
-        )
+        try:
+            await self._session.generate_reply(
+                tool_choice={"type": "function", "function": {"name": "give_turn_to_next_speaker"}},
+                instructions="User just spoke. Decide who should respond.",
+            )
+        except RuntimeError as e:
+            logging.warning("generate_reply skipped after user turn: %s", e)
 
     @function_tool(name="give_turn_to_next_speaker", description=TURN_TOOL_DESCRIPTION)
     async def next_speaker(
@@ -226,15 +258,75 @@ class DebateAgent(Agent):
 
         for p in self.all_personas:
             if p.name.lower() == speaker.lower():
-                return DebateAgent(
-                    topic=self.topic,
-                    persona=p,
-                    all_personas=self.all_personas,
-                    session=self._session,
-                )
+                async def _handoff():
+                    # Wait for the current turn to finish before swapping agents to avoid
+                    # scheduling while the session is draining.
+                    await context.wait_for_playout()
+                    self._session.update_agent(
+                        DebateAgent(
+                            topic=self.topic,
+                            persona=p,
+                            all_personas=self.all_personas,
+                            session=self._session,
+                        )
+                    )
+
+                asyncio.create_task(_handoff())
+                return None
 
         # fallback: stay as current
         return None
+
+    @function_tool(name="avatar_tool", description="Animate avatars in the UI with gestures, poses, expressions.")
+    async def avatar_tool(self, context: RunContext, call: AvatarToolCall):
+        """Forward a tool call to the UI via LiveKit data channel."""
+        room = getattr(getattr(self._session, "_room_io", None), "_room", None)
+        if not room:
+            logging.warning("avatar_tool: no room available to publish data")
+            return {"status": "no-room"}
+
+        payload = call.model_dump()
+        call_type = (payload.get("type") or "").strip()
+
+        # Only pass through supported expression presets; drop unsupported calls.
+        if call_type == "setExpression":
+            raw_preset = (
+                payload.get("preset")
+                or payload.get("expression")
+                or (payload.get("context") or {}).get("preset")
+                or (payload.get("context") or {}).get("expression")
+            )
+            if not raw_preset:
+                logging.warning("avatar_tool: missing preset for setExpression")
+                return {"status": "skipped", "reason": "missing-preset"}
+
+            preset = raw_preset.lower()
+            preset = self.EXPRESSION_SYNONYMS.get(preset, preset)
+            if preset not in self.SUPPORTED_EXPRESSIONS:
+                logging.warning("avatar_tool: unsupported preset '%s'", preset)
+                return {"status": "skipped", "reason": f"unsupported-preset:{preset}"}
+
+            ctx = payload.get("context") or {}
+            avatar_id = ctx.get("avatarId")
+            if avatar_id and avatar_id not in self.SUPPORTED_AVATAR_IDS:
+                logging.warning("avatar_tool: unsupported avatarId '%s'", avatar_id)
+                return {"status": "skipped", "reason": f"unsupported-avatar:{avatar_id}"}
+
+            payload = {"kind": "avatar-tool", "call": {"type": "setExpression", "preset": preset}}
+            if avatar_id:
+                payload["call"]["context"] = {"avatarId": avatar_id}
+        else:
+            logging.info("avatar_tool: unsupported call type '%s' ignored", call_type)
+            return {"status": "skipped", "reason": f"unsupported-type:{call_type}"}
+
+        try:
+            data = json.dumps(payload)
+            await room.local_participant.publish_data(data.encode("utf-8"), topic="avatar-tool")
+            logging.info("avatar_tool sent: %s", data)
+            return {"status": "sent"}
+        except Exception as e:
+            logging.exception("avatar_tool publish failed")
+            return {"status": "error", "message": str(e)}
 
 
 server = agents.AgentServer()

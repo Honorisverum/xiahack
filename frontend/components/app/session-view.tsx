@@ -3,6 +3,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { motion } from 'motion/react';
 import { useSessionContext, useSessionMessages } from '@livekit/components-react';
+import { RoomEvent } from 'livekit-client';
 import type { AppConfig } from '@/app-config';
 import { ChatTranscript } from '@/components/app/chat-transcript';
 import { PreConnectMessage } from '@/components/app/preconnect-message';
@@ -70,6 +71,26 @@ export const SessionView = ({
   const [chatOpen, setChatOpen] = useState(false);
   const scrollAreaRef = useRef<HTMLDivElement>(null);
   useAvatarToolBridge();
+
+  useEffect(() => {
+    const room = session?.room;
+    if (!room) return;
+    const onData = (payload: Uint8Array, _participant: any, _kind: any, topic?: string) => {
+      if (topic !== 'avatar-tool') return;
+      try {
+        const text = new TextDecoder().decode(payload);
+        const data = JSON.parse(text);
+        console.info('[AvatarToolBridge] received data packet', data);
+        (window as any).__avatarTools?.process?.(data?.call ? { tool_calls: [{ function: { arguments: JSON.stringify(data.call) } }] } : data);
+      } catch (err) {
+        console.error('[AvatarToolBridge] failed to parse data', err);
+      }
+    };
+    room.on(RoomEvent.DataReceived, onData);
+    return () => {
+      room.off(RoomEvent.DataReceived, onData);
+    };
+  }, [session]);
 
   const controls: ControlBarControls = {
     leave: true,
