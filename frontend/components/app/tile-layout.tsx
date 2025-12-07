@@ -50,8 +50,9 @@ export function TileLayout({ chatOpen }: TileLayoutProps) {
     ? 'h-[340px] w-[260px] lg:h-[360px] lg:w-[300px] max-w-[360px]'
     : 'h-[440px] w-[320px] lg:h-[460px] lg:w-[340px] max-w-[380px]';
   const tileChrome =
-    'overflow-hidden rounded-2xl border border-white/5 bg-gradient-to-br from-slate-900/85 via-black/85 to-slate-950/85 shadow-2xl shadow-black/40';
-  const labelClass = 'text-xs font-medium text-muted-foreground/90';
+    'overflow-hidden rounded-3xl border border-white/10 bg-gradient-to-br from-[#0d0f1a]/85 via-[#070912]/90 to-[#05060f]/90 shadow-[0_35px_120px_-70px_rgba(0,0,0,0.9)] backdrop-blur-[3px]';
+  const labelClass =
+    'text-[11px] font-semibold uppercase tracking-[0.26em] text-white/60 drop-shadow';
 
   return (
     <div className="pointer-events-none fixed inset-0 z-40 flex items-center justify-center px-4 pt-20 pb-32 md:px-8">
@@ -100,7 +101,10 @@ export function TileLayout({ chatOpen }: TileLayoutProps) {
                   maskImage: { duration: 1 },
                   filter: { duration: 1 },
                 }}
-                className={cn('overflow-hidden bg-black drop-shadow-xl/80', chatOpen ? 'h-[90px]' : 'h-auto w-full')}
+                className={cn(
+                  'overflow-hidden bg-black drop-shadow-xl/80',
+                  chatOpen ? 'h-[90px]' : 'h-auto w-full'
+                )}
               >
                 <VideoTrack
                   width={videoWidth}
@@ -159,7 +163,9 @@ export function TileLayout({ chatOpen }: TileLayoutProps) {
               </MotionContainer>
             )}
           </AnimatePresence>
-          <div className={labelClass}>{micTrack ? 'You' : isScreenShareEnabled ? 'Screen share' : 'Camera'}</div>
+          <div className={labelClass}>
+            {micTrack ? 'You' : isScreenShareEnabled ? 'Screen share' : 'Camera'}
+          </div>
         </div>
       </div>
     </div>

@@ -1,61 +1,99 @@
+import Image from 'next/image';
 import { Button } from '@/components/livekit/button';
-
-function WelcomeImage() {
-  return (
-    <svg
-      width="64"
-      height="64"
-      viewBox="0 0 64 64"
-      fill="none"
-      xmlns="http://www.w3.org/2000/svg"
-      className="text-fg0 mb-4 size-16"
-    >
-      <path
-        d="M15 24V40C15 40.7957 14.6839 41.5587 14.1213 42.1213C13.5587 42.6839 12.7956 43 12 43C11.2044 43 10.4413 42.6839 9.87868 42.1213C9.31607 41.5587 9 40.7957 9 40V24C9 23.2044 9.31607 22.4413 9.87868 21.8787C10.4413 21.3161 11.2044 21 12 21C12.7956 21 13.5587 21.3161 14.1213 21.8787C14.6839 22.4413 15 23.2044 15 24ZM22 5C21.2044 5 20.4413 5.31607 19.8787 5.87868C19.3161 6.44129 19 7.20435 19 8V56C19 56.7957 19.3161 57.5587 19.8787 58.1213C20.4413 58.6839 21.2044 59 22 59C22.7956 59 23.5587 58.6839 24.1213 58.1213C24.6839 57.5587 25 56.7957 25 56V8C25 7.20435 24.6839 6.44129 24.1213 5.87868C23.5587 5.31607 22.7956 5 22 5ZM32 13C31.2044 13 30.4413 13.3161 29.8787 13.8787C29.3161 14.4413 29 15.2044 29 16V48C29 48.7957 29.3161 49.5587 29.8787 50.1213C30.4413 50.6839 31.2044 51 32 51C32.7956 51 33.5587 50.6839 34.1213 50.1213C34.6839 49.5587 35 48.7957 35 48V16C35 15.2044 34.6839 14.4413 34.1213 13.8787C33.5587 13.3161 32.7956 13 32 13ZM42 21C41.2043 21 40.4413 21.3161 39.8787 21.8787C39.3161 22.4413 39 23.2044 39 24V40C39 40.7957 39.3161 41.5587 39.8787 42.1213C40.4413 42.6839 41.2043 43 42 43C42.7957 43 43.5587 42.6839 44.1213 42.1213C44.6839 41.5587 45 40.7957 45 40V24C45 23.2044 44.6839 22.4413 44.1213 21.8787C43.5587 21.3161 42.7957 21 42 21ZM52 17C51.2043 17 50.4413 17.3161 49.8787 17.8787C49.3161 18.4413 49 19.2044 49 20V44C49 44.7957 49.3161 45.5587 49.8787 46.1213C50.4413 46.6839 51.2043 47 52 47C52.7957 47 53.5587 46.6839 54.1213 46.1213C54.6839 45.5587 55 44.7957 55 44V20C55 19.2044 54.6839 18.4413 54.1213 17.8787C53.5587 17.3161 52.7957 17 52 17Z"
-        fill="currentColor"
-      />
-    </svg>
-  );
-}
 
 interface WelcomeViewProps {
   startButtonText: string;
   onStartCall: () => void;
+  companyName: string;
+  pageTitle: string;
+  pageDescription: string;
 }
 
 export const WelcomeView = ({
   startButtonText,
   onStartCall,
+  companyName,
+  pageTitle,
+  pageDescription,
   ref,
+  ...props
 }: React.ComponentProps<'div'> & WelcomeViewProps) => {
+  const displayName = companyName || pageTitle || 'Waifu Think Tank';
+  const descriptionCopy =
+    pageDescription ||
+    'Spin up a Grok-inspired waifu strategist, co-write lore, and iterate on prompts that hit just right. Tap start and the lab routes you straight into the convo loop.';
+
   return (
-    <div ref={ref}>
-      <section className="bg-background flex flex-col items-center justify-center text-center">
-        <WelcomeImage />
-
-        <p className="text-foreground max-w-prose pt-1 leading-6 font-medium">
-          Chat live with your voice AI agent
-        </p>
-
-        <Button variant="primary" size="lg" onClick={onStartCall} className="mt-6 w-64 font-mono">
-          {startButtonText}
-        </Button>
-      </section>
-
-      <div className="fixed bottom-5 left-0 flex w-full items-center justify-center">
-        <p className="text-muted-foreground max-w-prose pt-1 text-xs leading-5 font-normal text-pretty md:text-sm">
-          Need help getting set up? Check out the{' '}
-          <a
-            target="_blank"
-            rel="noopener noreferrer"
-            href="https://docs.livekit.io/agents/start/voice-ai/"
-            className="underline"
-          >
-            Voice AI quickstart
-          </a>
-          .
-        </p>
+    <div ref={ref} className="relative isolate w-full" {...props}>
+      <div className="pointer-events-none absolute inset-0 -z-10">
+        <div className="absolute top-0 -left-24 h-72 w-72 rounded-full bg-[#ff52d9]/30 blur-3xl" />
+        <div className="absolute top-10 right-0 h-80 w-80 rounded-full bg-[#79e8ff]/25 blur-3xl" />
+        <div className="absolute inset-0 bg-[radial-gradient(circle_at_20%_20%,rgba(255,82,217,0.08),transparent_35%),radial-gradient(circle_at_80%_0%,rgba(121,232,255,0.08),transparent_30%),radial-gradient(circle_at_50%_70%,rgba(141,107,255,0.12),transparent_35%)]" />
+        <div className="absolute inset-6 rounded-[32px] border border-white/10 bg-gradient-to-b from-white/5 via-white/0 to-white/0 shadow-[0_30px_120px_-60px_rgba(0,0,0,0.9)] backdrop-blur-xl" />
+        <div className="absolute inset-0 [background-image:radial-gradient(circle_at_1px_1px,rgba(255,255,255,0.35),transparent_0)] [background-size:36px_36px] [opacity:.15]" />
       </div>
+
+      <section className="relative mx-auto flex min-h-[78svh] max-w-6xl flex-col gap-10 px-4 py-10 md:px-10 md:py-14 lg:px-16">
+        <header className="flex flex-col gap-6 border-b border-white/10 pb-8">
+          <div className="flex items-center gap-4">
+            <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-gradient-to-br from-[#ff52d9] via-[#8d6bff] to-[#79e8ff] shadow-lg shadow-fuchsia-500/30">
+              <Image
+                src="/waifu-think-tank.svg"
+                alt="Waifu Think Tank logo"
+                width={40}
+                height={40}
+                className="h-8 w-8"
+                priority
+              />
+            </div>
+            <div className="leading-tight">
+              <p className="text-[10px] font-semibold tracking-[0.45em] text-white/60 uppercase">
+                {displayName}
+              </p>
+              <p className="text-lg font-semibold text-white">Grok-flavored research lab</p>
+            </div>
+          </div>
+        </header>
+
+        <div className="space-y-8">
+          <div className="inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/5 px-4 py-2 text-[11px] font-semibold tracking-[0.28em] text-white/80 uppercase shadow-[0_15px_70px_-40px_rgba(121,232,255,0.8)]">
+            <span className="h-1.5 w-1.5 rounded-full bg-gradient-to-r from-[#ff52d9] to-[#79e8ff]" />
+            Grok attitude, anime brain
+          </div>
+
+          <div className="space-y-4">
+            <h1 className="text-4xl leading-[1.05] font-semibold text-balance text-white md:text-5xl lg:text-6xl">
+              {displayName} is your neon-lit command center for curious, sassy voice agents.
+            </h1>
+            <p className="text-lg text-pretty text-white/75 md:text-xl">{descriptionCopy}</p>
+          </div>
+
+          <div className="flex flex-wrap items-center gap-3">
+            <Button
+              variant="primary"
+              size="lg"
+              onClick={onStartCall}
+              className="h-12 rounded-full bg-gradient-to-r from-[#ff52d9] via-[#8d6bff] to-[#79e8ff] px-8 text-sm font-bold tracking-[0.25em] text-[#0b0c11] uppercase shadow-[0_25px_70px_-35px_rgba(255,82,217,0.9)] transition hover:scale-[1.02] hover:shadow-[0_30px_90px_-40px_rgba(121,232,255,1)]"
+            >
+              {startButtonText}
+            </Button>
+            <Button
+              variant="secondary"
+              size="lg"
+              asChild
+              className="h-12 rounded-full border border-white/20 bg-white/5 px-6 text-xs font-semibold tracking-[0.18em] text-white/80 hover:bg-white/10"
+            >
+              <a
+                href="https://docs.livekit.io/agents/start/voice-ai/"
+                target="_blank"
+                rel="noreferrer"
+              >
+                Voice AI quickstart
+              </a>
+            </Button>
+          </div>
+        </div>
+      </section>
     </div>
   );
 };

@@ -20,20 +20,20 @@ export interface AppConfig {
 }
 
 export const APP_CONFIG_DEFAULTS: AppConfig = {
-  companyName: 'LiveKit',
-  pageTitle: 'LiveKit Voice Agent',
-  pageDescription: 'A voice agent built with LiveKit',
+  companyName: 'Waifu Think Tank',
+  pageTitle: 'Waifu Think Tank',
+  pageDescription: 'A Grok-styled command center for your anime-native voice agent.',
 
   supportsChatInput: true,
   supportsVideoInput: true,
   supportsScreenShare: true,
   isPreConnectBufferEnabled: true,
 
-  logo: '/lk-logo.svg',
-  accent: '#002cf2',
-  logoDark: '/lk-logo-dark.svg',
-  accentDark: '#1fd5f9',
-  startButtonText: 'Start call',
+  logo: '/waifu-think-tank.svg',
+  accent: '#ff52d9',
+  logoDark: '/waifu-think-tank.svg',
+  accentDark: '#79e8ff',
+  startButtonText: 'Launch the lab',
 
   // for LiveKit Cloud Sandbox
   sandboxId: undefined,

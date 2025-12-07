@@ -1,22 +1,33 @@
 'use client';
 
 import React, { useEffect, useRef, useState } from 'react';
+import { DataPacket_Kind, Participant, RoomEvent } from 'livekit-client';
 import { motion } from 'motion/react';
 import { useSessionContext, useSessionMessages } from '@livekit/components-react';
-import { RoomEvent } from 'livekit-client';
 import type { AppConfig } from '@/app-config';
 import { ChatTranscript } from '@/components/app/chat-transcript';
 import { PreConnectMessage } from '@/components/app/preconnect-message';
 import { TileLayout } from '@/components/app/tile-layout';
-import { useAvatarToolBridge } from '@/hooks/useAvatarToolBridge';
 import {
   AgentControlBar,
   type ControlBarControls,
 } from '@/components/livekit/agent-control-bar/agent-control-bar';
+import { useAvatarToolBridge } from '@/hooks/useAvatarToolBridge';
 import { cn } from '@/lib/utils';
 import { ScrollArea } from '../livekit/scroll-area/scroll-area';
 
 const MotionBottom = motion.create('div');
+
+type AvatarToolPayload = {
+  call?: Record<string, unknown>;
+  [key: string]: unknown;
+};
+
+type ToolBridgePayload =
+  | AvatarToolPayload
+  | {
+      tool_calls: Array<{ function: { arguments: string } }>;
+    };
 
 const BOTTOM_VIEW_MOTION_PROPS = {
   variants: {
@@ -75,13 +86,30 @@ export const SessionView = ({
   useEffect(() => {
     const room = session?.room;
     if (!room) return;
-    const onData = (payload: Uint8Array, _participant: any, _kind: any, topic?: string) => {
+    const onData = (
+      payload: Uint8Array,
+      _participant?: Participant,
+      _kind?: DataPacket_Kind,
+      topic?: string
+    ) => {
       if (topic !== 'avatar-tool') return;
       try {
         const text = new TextDecoder().decode(payload);
-        const data = JSON.parse(text);
-        console.info('[AvatarToolBridge] received data packet', data);
-        (window as any).__avatarTools?.process?.(data?.call ? { tool_calls: [{ function: { arguments: JSON.stringify(data.call) } }] } : data);
+        const parsedData = JSON.parse(text) as AvatarToolPayload;
+        console.info('[AvatarToolBridge] received data packet', parsedData);
+
+        const avatarTools = (
+          window as typeof window & {
+            __avatarTools?: { process?: (data: ToolBridgePayload) => void };
+          }
+        ).__avatarTools;
+
+        const toolPayload: ToolBridgePayload =
+          parsedData.call !== undefined
+            ? { tool_calls: [{ function: { arguments: JSON.stringify(parsedData.call) } }] }
+            : parsedData;
+
+        avatarTools?.process?.(toolPayload);
       } catch (err) {
         console.error('[AvatarToolBridge] failed to parse data', err);
       }
@@ -110,7 +138,7 @@ export const SessionView = ({
   }, [messages]);
 
   return (
-    <section className="bg-background relative z-10 h-full w-full overflow-hidden" {...props}>
+    <section className="relative z-10 h-full w-full overflow-hidden text-white" {...props}>
       {/* Chat Transcript */}
       <div
         className={cn(
@@ -139,13 +167,14 @@ export const SessionView = ({
         {appConfig.isPreConnectBufferEnabled && (
           <PreConnectMessage messages={messages} className="pb-4" />
         )}
-        <div className="bg-background relative mx-auto max-w-2xl pb-3 md:pb-12">
-          <Fade bottom className="absolute inset-x-0 top-0 h-4 -translate-y-full" />
+        <div className="relative mx-auto max-w-3xl rounded-[28px] border border-white/10 bg-white/[0.06] px-2 pt-2 pb-4 shadow-[0_20px_90px_-55px_rgba(0,0,0,0.9)] backdrop-blur-2xl md:pb-10">
+          <Fade bottom className="absolute inset-x-4 top-0 h-6 -translate-y-full" />
           <AgentControlBar
             controls={controls}
             isConnected={session.isConnected}
             onDisconnect={session.end}
             onChatOpenChange={setChatOpen}
+            className="border-white/10 bg-white/[0.03] text-white shadow-[0_20px_70px_-60px_rgba(0,0,0,1)]"
           />
         </div>
       </MotionBottom>
