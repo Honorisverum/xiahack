@@ -5,18 +5,31 @@ import type { TrackReference } from '@livekit/components-react';
 import { Track } from 'livekit-client';
 import { cn } from '@/lib/utils';
 import { useSessionContext, useVoiceAssistant } from '@livekit/components-react';
+import { VRMHumanBoneName } from '@pixiv/three-vrm';
 
 type VrmAvatarProps = {
   vrmSrc: string;
   audioTrack?: TrackReference;
   className?: string;
+  allowLocalAudio?: boolean;
+  rotateY?: number;
+  scale?: number;
+  mirrorArms?: boolean;
 };
 
 /**
  * Lightweight VRM viewer with lip sync driven by a LiveKit audio track.
  * Uses dynamic imports to avoid SSR issues with three.js.
  */
-export function VrmAvatar({ vrmSrc, audioTrack, className }: VrmAvatarProps) {
+export function VrmAvatar({
+  vrmSrc,
+  audioTrack,
+  className,
+  allowLocalAudio = false,
+  rotateY = 0,
+  scale = 1,
+  mirrorArms = false,
+}: VrmAvatarProps) {
   const mountRef = useRef<HTMLDivElement>(null);
   const setMouthOpenRef = useRef<(v: number) => void>(() => {});
   const [debugLevel, setDebugLevel] = useState<number>(0);
@@ -39,6 +52,48 @@ export function VrmAvatar({ vrmSrc, audioTrack, className }: VrmAvatarProps) {
     let animationFrame: number;
     let idleTime = 0;
     const idleBones: Array<{ bone: any; base: any; name: string }> = [];
+    let blinkTimer = 2.5 + Math.random() * 3.0;
+    let blinkPhase = 0;
+    let blinkValue = 0;
+    let gazeTimer = 1.5 + Math.random() * 1.5;
+    const gazeOffset = { x: 0, y: 0 };
+    let breatheAmp = 0.014;
+    let swayAmp = 0.05;
+    let nodAmp = 0.025;
+    let armAmp = 0.03;
+    const armTargets: Array<{ node: any; base: any; quat: any }> = [];
+    const armPoseBase = [
+      // Shoulders: downward tilt with a bit more outward roll
+      { name: 'J_Bip_L_Shoulder', degX: -10, degZ: -15 },
+      { name: 'J_Bip_R_Shoulder', degX: -10, degZ: 15 },
+      // Upper arms: hang down with a wider flare to clear hips/skirt
+      { name: 'J_Bip_L_UpperArm', degX: -10, degZ: -65 },
+      { name: 'J_Bip_R_UpperArm', degX: -10, degZ: 65 },
+      // Lower arms: mild bend and slight outward
+      { name: 'J_Bip_L_LowerArm', degX: -18, degZ: -8 },
+      { name: 'J_Bip_R_LowerArm', degX: -18, degZ: 8 },
+    ];
+    let spinePause = 0;
+    let spinePhase = 0;
+    let spineNoise = 0;
+    let spineNoiseSpeed = 0.35 + Math.random() * 0.2;
+    let breatheAmpTarget = breatheAmp;
+    let swayAmpTarget = swayAmp;
+    let nodAmpTarget = nodAmp;
+    let armAmpTarget = armAmp;
+    let breatheFreq = 1.0;
+    let swayFreq = 0.85;
+    let nodFreq = 1.2;
+    let armFreq = 0.95;
+    let breatheFreqTarget = breatheFreq;
+    let swayFreqTarget = swayFreq;
+    let nodFreqTarget = nodFreq;
+    let armFreqTarget = armFreq;
+    let ampTimer = 8 + Math.random() * 6;
+    let tiltTimer = 6 + Math.random() * 6;
+    let tiltPhase = 0;
+    let tiltValue = 0;
+    let tiltTarget = 0;
 
     const start = async () => {
       console.info('[VRM] initializing loader for', vrmSrc);
@@ -52,11 +107,36 @@ export function VrmAvatar({ vrmSrc, audioTrack, className }: VrmAvatarProps) {
         const humanoid = currentVrm?.humanoid;
         if (!humanoid) return;
         idleBones.length = 0;
-        const names = ['spine', 'chest', 'neck', 'head', 'leftUpperArm', 'rightUpperArm'];
+        const names = [
+          'spine',
+          'chest',
+          'neck',
+          'head',
+          'leftShoulder',
+          'rightShoulder',
+          'leftUpperArm',
+          'rightUpperArm',
+          'leftLowerArm',
+          'rightLowerArm',
+        ];
+        const axisZ = new THREE.Vector3(0, 0, 1);
+        const baseOffsets: Record<string, number> = {
+          leftShoulder: -15,
+          rightShoulder: 15,
+          leftUpperArm: -80,
+          rightUpperArm: 80,
+          leftLowerArm: -25,
+          rightLowerArm: 25,
+        };
         names.forEach((name) => {
           const bone = humanoid.getNormalizedBoneNode(name);
           if (bone) {
-            idleBones.push({ bone, base: bone.quaternion.clone(), name });
+            const base = bone.quaternion.clone();
+            const offset = baseOffsets[name];
+            if (offset !== undefined) {
+              base.premultiply(new THREE.Quaternion().setFromAxisAngle(axisZ, THREE.MathUtils.degToRad(offset)));
+            }
+            idleBones.push({ bone, base, name });
           }
         });
       };
@@ -65,20 +145,21 @@ export function VrmAvatar({ vrmSrc, audioTrack, className }: VrmAvatarProps) {
         if (!idleBones.length) return;
         idleTime += delta;
         const t = idleTime;
-        const motionScale = 0.25;
-        const breathe = Math.sin(t * 1.2) * 0.015 * motionScale;
-        const sway = Math.sin(t * 0.8) * 0.06 * motionScale;
-        const nod = Math.sin(t * 1.6) * 0.03 * motionScale;
-        const armWave = Math.sin(t * 0.9) * 0.04 * motionScale;
+        const motionScale = 0.2;
+        const breathe = Math.sin(t * breatheFreq) * breatheAmp * motionScale;
+        const sway = Math.sin(t * swayFreq) * swayAmp * motionScale + spineNoise;
+        const nod = Math.sin(t * nodFreq) * nodAmp * motionScale;
+        const armWave = Math.sin(t * armFreq) * armAmp * motionScale;
 
         idleBones.forEach(({ bone, base, name }) => {
           tmpEuler.set(0, 0, 0, 'XYZ');
           if (name === 'spine' || name === 'chest') {
             tmpEuler.x += breathe;
-            tmpEuler.y += sway * 0.4;
+            tmpEuler.y += sway * 0.25;
           } else if (name === 'neck' || name === 'head') {
             tmpEuler.x += nod * 0.6;
-            tmpEuler.y += sway;
+            tmpEuler.y += sway * 0.6;
+            tmpEuler.z += tiltValue;
           } else if (name === 'leftUpperArm') {
             tmpEuler.z += armWave * 0.5;
             tmpEuler.x += breathe * 0.5;
@@ -103,6 +184,8 @@ export function VrmAvatar({ vrmSrc, audioTrack, className }: VrmAvatarProps) {
       mountRef.current!.appendChild(renderer.domElement);
 
       scene = new THREE.Scene();
+      const lookTarget = new THREE.Object3D();
+      scene.add(lookTarget);
 
       camera = new THREE.PerspectiveCamera(
         25,
@@ -121,14 +204,63 @@ export function VrmAvatar({ vrmSrc, audioTrack, className }: VrmAvatarProps) {
       loader.register((parser: any) => new VRMLoaderPlugin(parser));
       const gltf = await loader.loadAsync(vrmSrc);
       console.info('[VRM] gltf loaded', gltf);
+      console.info('[VRM] clips', gltf.animations?.map((a: any) => a.name || 'unnamed') ?? []);
+      if ((gltf as any).parser?.json?.nodes) {
+        const nodes = (gltf as any).parser.json.nodes;
+        console.info(
+          '[VRM] nodes sample',
+          nodes
+            .map((n: any, idx: number) => ({ idx, name: n.name }))
+            .filter((n: any) => n.name && /arm|hand|shoulder/i.test(n.name))
+            .slice(0, 20)
+        );
+      }
 
       VRMUtils.removeUnnecessaryVertices(gltf.scene);
       VRMUtils.combineSkeletons(gltf.scene);
 
       currentVrm = gltf.userData.vrm;
-      currentVrm.scene.rotation.y = 0;
+      currentVrm.scene.rotation.y = rotateY;
+      if (scale !== 1) {
+        currentVrm.scene.scale.setScalar(scale);
+      }
       scene.add(currentVrm.scene);
+      // Relax arms from T-pose using actual humanoid names
+      if (currentVrm.humanoid) {
+        const human = currentVrm.humanoid;
+        const humanNames = Object.entries((human as any).humanBones ?? {}).reduce(
+          (acc: Record<string, string>, [k, v]: [string, any]) => {
+            acc[k] = v?.node?.name;
+            return acc;
+          },
+          {}
+        );
+        console.info('[VRM] humanoid bones', humanNames);
+      }
+      // Prepare arm targets to keep arms relaxed out of T-pose
+      armTargets.length = 0;
+      const armPose = armPoseBase.map((pose) => {
+        const sign = mirrorArms ? -1 : 1;
+        return { ...pose, degZ: (pose.degZ ?? 0) * sign };
+      });
+
+      armPose.forEach(({ name, degX = 0, degZ = 0 }) => {
+        const node = gltf.scene.getObjectByName(name);
+        if (node) {
+          const base = node.quaternion.clone();
+          const offset = new THREE.Quaternion().setFromEuler(
+            new THREE.Euler(THREE.MathUtils.degToRad(degX), 0, THREE.MathUtils.degToRad(degZ))
+          );
+          const quat = base.clone().multiply(offset);
+          armTargets.push({ node, base, quat });
+        } else {
+          console.warn('[VRM] relaxNode missing', name);
+        }
+      });
       cacheIdleBones();
+      if (currentVrm.lookAt) {
+        currentVrm.lookAt.target = lookTarget;
+      }
 
       const box = new THREE.Box3().setFromObject(currentVrm.scene);
       const center = box.getCenter(new THREE.Vector3());
@@ -176,6 +308,87 @@ export function VrmAvatar({ vrmSrc, audioTrack, className }: VrmAvatarProps) {
         animationFrame = requestAnimationFrame(animate);
         const delta = clock.getDelta();
 
+        // Blink
+        blinkTimer -= delta;
+        if (blinkTimer <= 0) {
+          blinkPhase = 1;
+          blinkTimer = 2.5 + Math.random() * 3.0;
+        }
+        if (blinkPhase === 1) {
+          blinkValue += delta / 0.08;
+          if (blinkValue >= 1) {
+            blinkValue = 1;
+            blinkPhase = 2;
+          }
+        } else if (blinkPhase === 2) {
+          blinkValue -= delta / 0.12;
+          if (blinkValue <= 0) {
+            blinkValue = 0;
+            blinkPhase = 0;
+          }
+        }
+
+        // Gaze micro-darts
+        gazeTimer -= delta;
+        if (gazeTimer <= 0) {
+          gazeOffset.x = (Math.random() * 2 - 1) * 0.12;
+          gazeOffset.y = (Math.random() * 2 - 1) * 0.1;
+          gazeTimer = 1.5 + Math.random() * 1.5;
+        }
+        gazeOffset.x *= 0.92;
+        gazeOffset.y *= 0.92;
+
+        // Amplitude randomization
+        ampTimer -= delta;
+        if (ampTimer <= 0) {
+          breatheAmpTarget = 0.012 + Math.random() * 0.01;
+          swayAmpTarget = 0.045 + Math.random() * 0.03;
+          nodAmpTarget = 0.02 + Math.random() * 0.02;
+          armAmpTarget = 0.025 + Math.random() * 0.02;
+          breatheFreqTarget = 0.85 + Math.random() * 0.35;
+          swayFreqTarget = 0.7 + Math.random() * 0.4;
+          nodFreqTarget = 1.0 + Math.random() * 0.4;
+          armFreqTarget = 0.8 + Math.random() * 0.35;
+          ampTimer = 8 + Math.random() * 6;
+        }
+        spinePause -= delta;
+        if (spinePause <= 0) {
+          spinePhase = Math.random() * Math.PI * 2;
+          spinePause = 2.5 + Math.random() * 3.5;
+          spineNoiseSpeed = 0.25 + Math.random() * 0.3;
+        }
+        spineNoise = Math.sin(clock.elapsedTime * spineNoiseSpeed + spinePhase) * 0.015;
+        const damp = (cur: number, target: number, lambda: number) =>
+          cur + (target - cur) * Math.min(1, lambda * delta);
+        breatheAmp = damp(breatheAmp, breatheAmpTarget, 1.5);
+        swayAmp = damp(swayAmp, swayAmpTarget, 1.5);
+        nodAmp = damp(nodAmp, nodAmpTarget, 1.5);
+        armAmp = damp(armAmp, armAmpTarget, 1.5);
+        breatheFreq = damp(breatheFreq, breatheFreqTarget, 1.2);
+        swayFreq = damp(swayFreq, swayFreqTarget, 1.2);
+        nodFreq = damp(nodFreq, nodFreqTarget, 1.2);
+        armFreq = damp(armFreq, armFreqTarget, 1.2);
+
+        // Occasional head tilt bursts
+        tiltTimer -= delta;
+        if (tiltTimer <= 0) {
+          tiltPhase = 1;
+          tiltTarget = (Math.random() * 2 - 1) * 0.05; // ~3 deg
+          tiltTimer = 7 + Math.random() * 6;
+        }
+        if (tiltPhase === 1) {
+          tiltValue = THREE.MathUtils.damp(tiltValue, tiltTarget, 8, delta);
+          if (Math.abs(tiltValue - tiltTarget) < 0.003) {
+            tiltPhase = 2;
+          }
+        } else if (tiltPhase === 2) {
+          tiltValue = THREE.MathUtils.damp(tiltValue, 0, 6, delta);
+          if (Math.abs(tiltValue) < 0.001) {
+            tiltPhase = 0;
+            tiltValue = 0;
+          }
+        }
+
         if (currentVrm?.expressionManager) {
           const manager = currentVrm.expressionManager;
           const currentMouth = manager.getValue(VRMExpressionPresetName.Aa) ?? 0;
@@ -193,10 +406,19 @@ export function VrmAvatar({ vrmSrc, audioTrack, className }: VrmAvatarProps) {
             VRMExpressionPresetName.Ou,
             activePreset === 'Ou' ? nextMouth * 0.9 : 0
           );
+          manager.setValue(VRMExpressionPresetName.Blink, Math.min(Math.max(blinkValue, 0), 1));
         }
 
         applyProceduralIdle(delta);
+        if (currentVrm?.lookAt) {
+          lookTarget.position.set(gazeOffset.x * 0.5, 1.35 + gazeOffset.y * 0.35, 0.6);
+        }
         currentVrm?.update(delta);
+        // Force relaxed arms each frame
+        armTargets.forEach(({ node, base, quat }) => {
+          node.quaternion.copy(quat ?? base);
+          node.updateMatrixWorld(true);
+        });
         if (mixer) mixer.update(delta);
         renderer.render(scene, camera);
       };
@@ -245,8 +467,8 @@ export function VrmAvatar({ vrmSrc, audioTrack, className }: VrmAvatarProps) {
       setDebugStatus('no-track');
       return;
     }
-    // Only lip-sync to remote assistant audio, not local mic
-    if (track.participant?.isLocal) {
+    // Only lip-sync to remote audio unless allowLocalAudio is true
+    if (!allowLocalAudio && track.participant?.isLocal) {
       setDebugStatus('local-track');
       return;
     }
