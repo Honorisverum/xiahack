@@ -8,7 +8,6 @@ from typing import Annotated, Any, Literal
 from diskcache import Cache
 from dotenv import load_dotenv
 from pydantic import BaseModel, Field, ConfigDict
-from tenacity import retry, stop_after_attempt
 
 from livekit import agents
 from livekit.agents import AgentSession, Agent, ChatMessage, ChatContext, room_io, function_tool, RunContext, ToolError
@@ -85,10 +84,6 @@ Example energy:
 - User challenges you → double down HARDER, get spicy
 - User agrees → "Finally someone with sense" then use them as ammo against opponent
 - User neutral → pull them to your side with a direct challenge
-
-## Animation
-Call `avatar_tool` with expressions: "smile", "surprised", "concerned", "wink", "laugh"
-Include context.avatarId as "assistant" or "local"
 
 ## Formatting Rules
 - before each other participant's response, you will see the speaker's name in the following format: "$speaker_name says$". 
@@ -213,7 +208,6 @@ def generate_debating_personas(topic: str, genders: tuple[str, ...]) -> list[Per
             gender="female",
             prompt=(
                 f"You're Raven. On '{topic}': you've seen what happens when people play it safe — mediocrity. "
-                "You shipped code at 4am while 'balanced' people slept their way to irrelevance. "
                 "Comfort is the enemy. Growth comes from discomfort. Say it raw, no HR filter. "
                 "Mock the weak takes. Call out the cope."
             ),
@@ -317,20 +311,22 @@ class DebateAgent(Agent):
             )
         return formatted
 
-    @retry(stop=stop_after_attempt(3), reraise=True)
     async def _send_rpc(self, method: str, payload: Any):
-        """Send RPC to frontend client."""
-        if self._session._room_io is None:
-            return
-        room = self._session._room_io._room
-        if not room or not room.remote_participants:
-            return
-        client_identity = next(iter(room.remote_participants.keys()))
-        await room.local_participant.perform_rpc(
-            destination_identity=client_identity,
-            method=method,
-            payload=json.dumps(payload),
-        )
+        """Send RPC to frontend client. Silently fails if no client."""
+        try:
+            if self._session._room_io is None:
+                return
+            room = self._session._room_io._room
+            if not room or not room.remote_participants:
+                return
+            client_identity = next(iter(room.remote_participants.keys()))
+            await room.local_participant.perform_rpc(
+                destination_identity=client_identity,
+                method=method,
+                payload=json.dumps(payload),
+            )
+        except Exception:
+            pass  # RpcError can't be pickled, suppress to avoid log serialization crash
 
     async def on_enter(self):
         asyncio.create_task(self._send_rpc("speaker_changed", {"id": self.persona.id}))
@@ -341,9 +337,10 @@ class DebateAgent(Agent):
             ]))
 
         await self.update_chat_ctx(self._reformat_history(self._session.history))
-        for m in self.chat_ctx.items:
-            if hasattr(m, 'role') and getattr(m, 'role', None) != 'system':
-                print(f"[{getattr(m, 'speaker', getattr(m, 'role', '?'))}] {getattr(m, 'content', '')}")
+        # for m in self.chat_ctx.items:
+        #     if hasattr(m, 'role') and getattr(m, 'role', None) != 'system':
+        #         print(f"[{getattr(m, 'speaker', getattr(m, 'role', '?'))}] {getattr(m, 'content', '')}")
+        print(self._session.history.items)
         try:
             has_user_message = any(
                 isinstance(item, DebateChatMessage) and item.role == "user"
@@ -351,11 +348,7 @@ class DebateAgent(Agent):
             )
             if has_user_message:
                 await self._session.generate_reply(
-                    instructions="Respond directly to the user's opening message in <=15 words."
-                )
-                await self._session.generate_reply(
-                    tool_choice={"type": "function", "function": {"name": "give_turn_to_next_speaker"}},
-                    instructions="Now decide who should speak next.",
+                    instructions="Respond in ONE sentence (<=15 words), then call give_turn_to_next_speaker."
                 )
             else:
                 logging.info("Waiting for initial user input before responding")
@@ -387,11 +380,7 @@ class DebateAgent(Agent):
         speaker: Annotated[str, "Name of next speaker: one of the other participants or 'user'"],
     ):
         if speaker.lower() == "user":
-            async def _prompt_user():
-                await context.wait_for_playout()
-                self._session.say("What do you think?")
-
-            asyncio.create_task(_prompt_user())
+            # Just pass turn to user, agent already prompted them in its reply
             return None
 
         for p in self.all_personas:
@@ -456,54 +445,55 @@ class DebateAgent(Agent):
         except Exception as e:
             logging.exception("avatar_tool publish failed")
             return {"status": "error", "message": str(e)}
-    @function_tool(name="add_hot_take", description="Add a new hot take to the shared list")
-    async def add_hot_take(
-        self,
-        context: RunContext,
-        text: Annotated[str, "The hot take text — sharp, tweetable insight from the debate"],
-    ):
-        takes = self._session.hot_takes
-        if text in takes:
-            raise ToolError(f"Hot take already exists: '{text}'")
-        if len(takes) >= MAX_HOT_TAKES:
-            raise ToolError(f"Limit reached ({MAX_HOT_TAKES}). Replace or delete first.")
-        takes.append(text)
-        logging.info(f"[{self.persona.name}] ADD hot take: {text}")
-        await self._refresh_instructions()
-        asyncio.create_task(self._send_rpc("hot_takes_updated", {"takes": list(takes)}))
-        return "Added"
 
-    @function_tool(name="replace_hot_take", description="Replace an existing hot take with a refined version")
-    async def replace_hot_take(
-        self,
-        context: RunContext,
-        old_text: Annotated[str, "Exact text of the hot take to replace"],
-        new_text: Annotated[str, "New refined text"],
-    ):
-        takes = self._session.hot_takes
-        if old_text not in takes:
-            raise ToolError(f"Hot take not found: '{old_text}'")
-        idx = takes.index(old_text)
-        takes[idx] = new_text
-        logging.info(f"[{self.persona.name}] REPLACE hot take: '{old_text}' → '{new_text}'")
-        await self._refresh_instructions()
-        asyncio.create_task(self._send_rpc("hot_takes_updated", {"takes": list(takes)}))
-        return "Replaced"
+    # @function_tool(name="add_hot_take", description="Add a new hot take to the shared list")
+    # async def add_hot_take(
+    #     self,
+    #     context: RunContext,
+    #     text: Annotated[str, "The hot take text — sharp, tweetable insight from the debate"],
+    # ):
+    #     takes = self._session.hot_takes
+    #     if text in takes:
+    #         raise ToolError(f"Hot take already exists: '{text}'")
+    #     if len(takes) >= MAX_HOT_TAKES:
+    #         raise ToolError(f"Limit reached ({MAX_HOT_TAKES}). Replace or delete first.")
+    #     takes.append(text)
+    #     logging.info(f"[{self.persona.name}] ADD hot take: {text}")
+    #     await self._refresh_instructions()
+    #     asyncio.create_task(self._send_rpc("hot_takes_updated", {"takes": list(takes)}))
+    #     return "Added"
 
-    @function_tool(name="delete_hot_take", description="Delete a hot take from the shared list")
-    async def delete_hot_take(
-        self,
-        context: RunContext,
-        text: Annotated[str, "Exact text of the hot take to delete"],
-    ):
-        takes = self._session.hot_takes
-        if text not in takes:
-            raise ToolError(f"Hot take not found: '{text}'")
-        takes.remove(text)
-        logging.info(f"[{self.persona.name}] DELETE hot take: {text}")
-        await self._refresh_instructions()
-        asyncio.create_task(self._send_rpc("hot_takes_updated", {"takes": list(takes)}))
-        return "Deleted"
+    # @function_tool(name="replace_hot_take", description="Replace an existing hot take with a refined version")
+    # async def replace_hot_take(
+    #     self,
+    #     context: RunContext,
+    #     old_text: Annotated[str, "Exact text of the hot take to replace"],
+    #     new_text: Annotated[str, "New refined text"],
+    # ):
+    #     takes = self._session.hot_takes
+    #     if old_text not in takes:
+    #         raise ToolError(f"Hot take not found: '{old_text}'")
+    #     idx = takes.index(old_text)
+    #     takes[idx] = new_text
+    #     logging.info(f"[{self.persona.name}] REPLACE hot take: '{old_text}' → '{new_text}'")
+    #     await self._refresh_instructions()
+    #     asyncio.create_task(self._send_rpc("hot_takes_updated", {"takes": list(takes)}))
+    #     return "Replaced"
+
+    # @function_tool(name="delete_hot_take", description="Delete a hot take from the shared list")
+    # async def delete_hot_take(
+    #     self,
+    #     context: RunContext,
+    #     text: Annotated[str, "Exact text of the hot take to delete"],
+    # ):
+    #     takes = self._session.hot_takes
+    #     if text not in takes:
+    #         raise ToolError(f"Hot take not found: '{text}'")
+    #     takes.remove(text)
+    #     logging.info(f"[{self.persona.name}] DELETE hot take: {text}")
+    #     await self._refresh_instructions()
+    #     asyncio.create_task(self._send_rpc("hot_takes_updated", {"takes": list(takes)}))
+    #     return "Deleted"
 
     # @function_tool(name="dig_deeper", description="Research a topic when debate lacks facts or is stuck. You will leave to research and return with findings.")
     # async def dig_deeper(
