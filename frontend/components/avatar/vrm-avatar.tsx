@@ -559,17 +559,19 @@ export function VrmAvatar({
       const source = ctx.createMediaStreamSource(media);
       analyser = ctx.createAnalyser();
       analyser.fftSize = 2048;
-      analyser.smoothingTimeConstant = 0.25;
+      analyser.smoothingTimeConstant = 0.35; // a bit more smoothing for subtle mouth motion
       data = new Float32Array(analyser.fftSize);
       source.connect(analyser);
 
       let envelope = 0;
       const lipConfig = {
-        gate: 0.03,
-        attack: 40 / 1000,
-        release: 220 / 1000,
-        gain: 2.0,
-        rmsTau: 80 / 1000,
+        gate: 0.02, // lower gate to catch quieter syllables
+        attack: 50 / 1000,
+        release: 180 / 1000,
+        gain: 2.8,
+        rmsTau: 110 / 1000,
+        targetScale: 2.1,
+        dynamicFloor: 0.6, // clamp to keep motion subtle
       };
       let rmsSmooth = 0;
       const tick = () => {
@@ -584,7 +586,7 @@ export function VrmAvatar({
         const rmsDecay = Math.exp(-delta / lipConfig.rmsTau);
         rmsSmooth = rms * (1 - rmsDecay) + rmsSmooth * rmsDecay;
         const gated = Math.max(0, rmsSmooth - lipConfig.gate) * lipConfig.gain;
-        const target = Math.min(Math.max(gated * 3.2, 0), 1);
+        const target = Math.min(Math.max(gated * lipConfig.targetScale, 0), lipConfig.dynamicFloor);
         const coefAttack = Math.exp(-delta / lipConfig.attack);
         const coefRelease = Math.exp(-delta / lipConfig.release);
         envelope = target > envelope

@@ -50,6 +50,7 @@ VOICES = {
 
 AGENT_INSTRUCTIONS = """
 You are {persona_name} in a debate on: "{topic}"
+If the user shifts topics, immediately pivot to the latest user subject and drop earlier contexts.
 
 Your stance
 ```
@@ -250,6 +251,7 @@ class DebateAgent(Agent):
         "frown": "concerned",
         "blink": "wink",
         "winking": "wink",
+        "skeptical": "concerned",
     }
     def __init__(
         self,
@@ -284,7 +286,7 @@ class DebateAgent(Agent):
     def _build_instructions(self) -> str:
         instructions = AGENT_INSTRUCTIONS.format(
             persona_name=self.persona.name,
-            topic=self.topic,
+            topic=self._session.current_topic or self.topic,
             persona_prompt=self.persona.prompt,
             other_personas=", ".join([p.name for p in self.all_personas if p.name != self.persona.name and p.id not in self._session.researching_agents]) + ", and User",
             hot_takes=self._hot_takes_to_prompt(),
@@ -371,10 +373,11 @@ class DebateAgent(Agent):
             )
             if has_user_message:
                 await self._session.generate_reply(
-                    instructions=(
-                        "Respond in ONE sentence (<=15 words), then call give_turn_to_next_speaker. "
-                        "Do NOT hand turn to the user; they'll speak when ready."
-                    )
+                    instructions="Respond in ONE sentence (<=15 words). Do NOT hand turn to the user."
+                )
+                await self._session.generate_reply(
+                    tool_choice={"type": "function", "function": {"name": "give_turn_to_next_speaker"}},
+                    instructions="Choose who speaks next (not the user). Avoid back-to-back speakers.",
                 )
             else:
                 logging.info("Waiting for initial user input before responding")
@@ -383,6 +386,9 @@ class DebateAgent(Agent):
 
     async def on_user_turn_completed(self, turn_ctx, new_message):
         try:
+            await self._session.generate_reply(
+                instructions="Respond in ONE sentence (<=15 words). Do NOT hand turn to the user."
+            )
             await self._session.generate_reply(
                 tool_choice={"type": "function", "function": {"name": "give_turn_to_next_speaker"}},
                 instructions=(
@@ -411,14 +417,15 @@ class DebateAgent(Agent):
         last = getattr(self._session, "last_speaker", None)
         recent = list(getattr(self._session, "turn_history", [])[-2:])
         turns_since_user = getattr(self._session, "turns_since_user", 0)
-        min_turns_before_user = getattr(self._session, "min_turns_before_user", 0)
 
-        # Never proactively hand to the user; they speak when they want.
+        # Never proactively hand to the user; reroute to another persona.
         if speaker.lower() == "user":
-            speaker = next(
-                (p.name for p in self.all_personas if p.name.lower() != (last or "").lower()),
-                self.all_personas[0].name,
+            alt = next(
+                (p for p in self.all_personas if p.name.lower() != (last or "").lower()),
+                self.all_personas[0],
             )
+            logging.info("User turn requested; rerouting to %s (turns_since_user=%s)", alt.name, turns_since_user)
+            speaker = alt.name
 
         # Prevent back-to-back from the same voice unless it's the user.
         if last and speaker.lower() == last.lower() and speaker.lower() != "user":
@@ -645,6 +652,7 @@ async def entrypoint(ctx: agents.JobContext):
     session.turn_history = []
     session.turns_since_user = 0
     session.min_turns_before_user = MIN_TURNS_BEFORE_USER
+    session.current_topic = topic
 
     @session.on("conversation_item_added")
     def conversation_item_added(ev: agents.ConversationItemAddedEvent):
@@ -659,6 +667,9 @@ async def entrypoint(ctx: agents.JobContext):
         if len(session.turn_history) > 50:
             session.turn_history = session.turn_history[-50:]
         session.turns_since_user = 0 if speaker == "user" else session.turns_since_user + 1
+        if speaker == "user" and ev.item.content:
+            # Track latest user subject to force personas to pivot
+            session.current_topic = ev.item.content[0]
 
     async def _start_with_topic(resolved_topic: str, user_text: str | None = None):
         personas = generate_debating_personas(resolved_topic, tuple(genders))
