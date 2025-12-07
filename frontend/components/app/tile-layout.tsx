@@ -115,7 +115,7 @@ export function TileLayout({ chatOpen }: TileLayoutProps) {
               </MotionContainer>
             )}
           </AnimatePresence>
-          <div className={labelClass}>Assistant</div>
+          <div className={labelClass}>Assistant 1</div>
         </div>
 
         {/* Local mic avatar or fallback camera */}
@@ -164,7 +164,7 @@ export function TileLayout({ chatOpen }: TileLayoutProps) {
             )}
           </AnimatePresence>
           <div className={labelClass}>
-            {micTrack ? 'You' : isScreenShareEnabled ? 'Screen share' : 'Camera'}
+            {micTrack ? 'Assistant 2' : isScreenShareEnabled ? 'Screen share' : 'Camera'}
           </div>
         </div>
       </div>
