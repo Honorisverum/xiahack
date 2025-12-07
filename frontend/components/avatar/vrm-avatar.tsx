@@ -4,6 +4,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import type { TrackReference } from '@livekit/components-react';
 import { Track } from 'livekit-client';
 import { cn } from '@/lib/utils';
+import { useSessionContext, useVoiceAssistant } from '@livekit/components-react';
 
 type VrmAvatarProps = {
   vrmSrc: string;
@@ -21,6 +22,10 @@ export function VrmAvatar({ vrmSrc, audioTrack, className }: VrmAvatarProps) {
   const [debugLevel, setDebugLevel] = useState<number>(0);
   const [debugStatus, setDebugStatus] = useState<string>('idle');
   const [status, setStatus] = useState<'loading' | 'ready' | 'error'>('loading');
+  const session = useSessionContext();
+  const { state: assistantState } = useVoiceAssistant();
+  const vowelPresetRef = useRef<'Aa' | 'Ih' | 'Ou'>('Aa');
+  const vowelUntilRef = useRef<number>(0);
 
   useEffect(() => {
     if (!mountRef.current) return;
@@ -175,7 +180,19 @@ export function VrmAvatar({ vrmSrc, audioTrack, className }: VrmAvatarProps) {
           const manager = currentVrm.expressionManager;
           const currentMouth = manager.getValue(VRMExpressionPresetName.Aa) ?? 0;
           const nextMouth = THREE.MathUtils.damp(currentMouth, mouthTarget.value, 18, delta);
+          const now = performance.now();
+          const activePreset =
+            now < vowelUntilRef.current ? vowelPresetRef.current : VRMExpressionPresetName.Aa;
+          // Always drive base open (Aa) so lips move even without vowel inference
           manager.setValue(VRMExpressionPresetName.Aa, nextMouth);
+          manager.setValue(
+            VRMExpressionPresetName.Ih,
+            activePreset === 'Ih' ? nextMouth * 0.9 : 0
+          );
+          manager.setValue(
+            VRMExpressionPresetName.Ou,
+            activePreset === 'Ou' ? nextMouth * 0.9 : 0
+          );
         }
 
         applyProceduralIdle(delta);
@@ -348,6 +365,19 @@ export function VrmAvatar({ vrmSrc, audioTrack, className }: VrmAvatarProps) {
       }
     };
   }, [audioTrack?.publication?.track]);
+
+  // Capture assistant transcript vowels to shape mouth briefly
+  useEffect(() => {
+    const text = assistantState?.lastTranscription?.text;
+    if (!text) return;
+    const vowels = text.toLowerCase().match(/[aeiou]/g);
+    if (!vowels?.length) return;
+    const last = vowels.at(-1) ?? 'a';
+    const preset: 'Aa' | 'Ih' | 'Ou' =
+      last === 'u' ? 'Ou' : last === 'i' || last === 'e' ? 'Ih' : 'Aa';
+    vowelPresetRef.current = preset;
+    vowelUntilRef.current = performance.now() + 180;
+  }, [assistantState?.lastTranscription?.text]);
 
   return (
     <div
