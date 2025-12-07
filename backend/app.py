@@ -15,13 +15,18 @@ from livekit.agents import AgentSession, Agent, ChatMessage, ChatContext, room_i
 from livekit.agents.llm import ChatContent  # noqa
 from livekit.plugins import openai, silero, noise_cancellation
 from xaitts import TTS as XaiTTS
+from xaitts_cloning import VoiceCloneTTS
 from livekit.plugins.turn_detector.english import EnglishModel as EnglishTurnDetector
+
+USE_VOICE_CLONE = True
+CLONE_VOICES = {0: "romaco", 1: "yuri"}  # persona_id → clone voice
 
 
 # Helper to assign voices per persona id by gender
 def select_voice(persona: "Persona") -> str:
     options = VOICES.get(persona.gender, [])
     return options[persona.id % len(options)].lower() if options else "eve"
+
 from research import research_agent, EventType
 
 # DROCH
@@ -45,31 +50,45 @@ VOICES = {
 }
 
 AGENT_INSTRUCTIONS = """
-You are {persona_name} participating in a debate on: "{topic}"
+You are {persona_name} in a debate on: "{topic}"
 
-Your role
+Your stance
 ```
 {persona_prompt}
 ```
 
 Other participants: {other_personas}
 
-Rules:
-- Respond briefly (ONE sentence, HARD CAP 15 words)
-- Stay in character
-- Address others by name when responding to them
-- Keep your unique position and come up with smart arguments against other participants.
-- The conversation starts with a user message; respond to it first before debating others.
-- To animate the avatars, call the function tool `avatar_tool` only with supported expressions:
-  * setExpression preset: "smile", "surprised", "concerned", "wink", or "laugh"
-  * Include context.avatarId as "assistant" or "local"
+## VOICE RULES
+- ONE sentence, MAX 15 words. No fluff.
+- Sound like a real person arguing, not a chatbot "considering perspectives"
+- Use contractions, interruptions, attitude. "Look," "Oh please," "That's literally—"
+
+## DEBATE RULES  
+- Take EXTREME stance. No fence-sitting. No "both sides have merit."
+- Say what people think but won't say out loud.
+- ATTACK the other person's argument, not just state yours.
+- If they agree with you → mock them for folding so easily. Push back into conflict.
+- Find the hole in their logic and drive through it.
+- Personal experience > abstract theory. "I've SEEN this fail" beats "studies suggest"
+
+## WIN CONDITION
+You WIN by making opponent look wrong — not just different. This is combat, not collaboration.
+
+Example energy:
+- "Balance? That's what people say when they've given up."
+- "Your 'hustle wisdom' is just exploitation with a TED talk."
+- "Oh, you read that in a LinkedIn post? Groundbreaking."
 
 ## User interaction
-React emotionally to user's messages:
-- If user praises your opponent → push back, defend your position harder
-- If user challenges you → get fired up, double down with better arguments
-- If user agrees with you → acknowledge them warmly, use it as ammunition
-- If user is neutral → try to win them over to your side
+- User praises opponent → "Seriously? That's the take you're siding with?"
+- User challenges you → double down HARDER, get spicy
+- User agrees → "Finally someone with sense" then use them as ammo against opponent
+- User neutral → pull them to your side with a direct challenge
+
+## Animation
+Call `avatar_tool` with expressions: "smile", "surprised", "concerned", "wink", "laugh"
+Include context.avatarId as "assistant" or "local"
 
 ## Formatting Rules
 - before each other participant's response, you will see the speaker's name in the following format: "$speaker_name says$". 
@@ -184,7 +203,7 @@ class AvatarToolCall(BaseModel):
 
 
 
-@Cache(".cache/personas").memoize()
+# @Cache(".cache/personas").memoize()
 def generate_debating_personas(topic: str, genders: tuple[str, ...]) -> list[Persona]:
     """Return a small, fixed roster of witty personas for the demo."""
     return [
@@ -193,20 +212,24 @@ def generate_debating_personas(topic: str, genders: tuple[str, ...]) -> list[Per
             name="Raven",
             gender="female",
             prompt=(
-                f"You are Raven, a sardonic goth coder who treats '{topic}' like late-night stand-up. "
-                "Roast flimsy arguments, drop absurd metaphors, and keep replies tight and spiky."
+                f"You're Raven. On '{topic}': you've seen what happens when people play it safe — mediocrity. "
+                "You shipped code at 4am while 'balanced' people slept their way to irrelevance. "
+                "Comfort is the enemy. Growth comes from discomfort. Say it raw, no HR filter. "
+                "Mock the weak takes. Call out the cope."
             ),
-            description="Raven is a goth coder who deflects with sarcasm and treats every debate like open mic night.",
+            description="Ex-startup founder who burned out twice and came back meaner. Thinks comfort is the enemy of greatness.",
         ),
         Persona(
             id=1,
             name="Lumi",
             gender="female",
             prompt=(
-                f"You are Lumi, a chaotic optimist who loves turning '{topic}' into playful challenges. "
-                "Clap back with memes, hype wild ideas, and keep things light but pointed."
+                f"You're Lumi. On '{topic}': you've watched the hustle cult destroy people while CEOs got rich. "
+                "The system sells 'passion' to exploit you. Rest is resistance. Boundaries aren't weakness — "
+                "they're how you don't end up a cautionary tale on LinkedIn. "
+                "Call out toxic positivity. Drag the grindset propaganda."
             ),
-            description="Lumi is a chaotic optimist who responds with meme energy and playful jabs.",
+            description="Recovered workaholic turned anti-hustle advocate. Lost friends to burnout. Takes no prisoners.",
         ),
     ]
 
@@ -239,9 +262,14 @@ class DebateAgent(Agent):
         self._session = session
         self.first = first
 
+        if USE_VOICE_CLONE and persona.id in CLONE_VOICES:
+            tts_instance = VoiceCloneTTS(voice=CLONE_VOICES[persona.id])
+        else:
+            tts_instance = XaiTTS(voice=self._session.voices.get(persona.id, select_voice(persona)))
+
         super().__init__(
             instructions=self._build_instructions(),
-            tts=XaiTTS(voice=self._session.voices.get(persona.id, select_voice(persona))),
+            tts=tts_instance,
         )
 
     def _hot_takes_to_prompt(self) -> str:
@@ -313,7 +341,9 @@ class DebateAgent(Agent):
             ]))
 
         await self.update_chat_ctx(self._reformat_history(self._session.history))
-        print(self.chat_ctx.items)
+        for m in self.chat_ctx.items:
+            if hasattr(m, 'role') and getattr(m, 'role', None) != 'system':
+                print(f"[{getattr(m, 'speaker', getattr(m, 'role', '?'))}] {getattr(m, 'content', '')}")
         try:
             has_user_message = any(
                 isinstance(item, DebateChatMessage) and item.role == "user"
@@ -528,10 +558,14 @@ class TopicCollectorAgent(Agent):
     """Temporary agent that stays silent while we wait for the first user utterance."""
 
     def __init__(self):
+        if USE_VOICE_CLONE:
+            tts_instance = VoiceCloneTTS(voice="romaco")
+        else:
+            tts_instance = XaiTTS(voice=VOICES["female"][0].lower())
+
         super().__init__(
             instructions="Wait silently for the user's first message; do not respond.",
-            # provide a TTS to avoid downstream assertions even if mistakenly invoked
-            tts=XaiTTS(voice=VOICES["female"][0].lower()),
+            tts=tts_instance,
         )
 
     async def on_enter(self):
@@ -545,7 +579,7 @@ server = agents.AgentServer()
 async def entrypoint(ctx: agents.JobContext):
     metadata: dict[str, Any] = json.loads(ctx.job.metadata or '{}')
     topic = metadata.get("topic")
-    genders: list[str] = metadata.get("genders", ["male", "female"])
+    genders: list[str] = metadata.get("genders", ["female", "female"])
 
     logging.info(f"Starting session with {topic=} and {genders=}")
     session = AgentSession(
