@@ -80,6 +80,8 @@ export const SessionView = ({
   const session = useSessionContext();
   const { messages } = useSessionMessages(session);
   const [chatOpen, setChatOpen] = useState(false);
+  const [activeSpeaker, setActiveSpeaker] = useState<'assistant-1' | 'assistant-2'>('assistant-1');
+  const lastRemoteMessageIdRef = useRef<string | number | undefined>(undefined);
   const scrollAreaRef = useRef<HTMLDivElement>(null);
   useAvatarToolBridge();
 
@@ -129,8 +131,23 @@ export const SessionView = ({
   };
 
   useEffect(() => {
+    const lastRemoteMessage = [...messages].reverse().find((msg) => !msg.from?.isLocal);
     const lastMessage = messages.at(-1);
     const lastMessageIsLocal = lastMessage?.from?.isLocal === true;
+
+    if (lastRemoteMessage && typeof lastRemoteMessage.message === 'string') {
+      if (lastRemoteMessage.id !== lastRemoteMessageIdRef.current) {
+        lastRemoteMessageIdRef.current = lastRemoteMessage.id;
+        const text = lastRemoteMessage.message.toLowerCase();
+
+        setActiveSpeaker((prev) => {
+          if (text.includes('raven')) return 'assistant-1';
+          if (text.includes('lumi')) return 'assistant-2';
+          // Fallback: alternate on each remote message when names aren’t present
+          return prev === 'assistant-1' ? 'assistant-2' : 'assistant-1';
+        });
+      }
+    }
 
     if (scrollAreaRef.current && lastMessageIsLocal) {
       scrollAreaRef.current.scrollTop = scrollAreaRef.current.scrollHeight;
@@ -157,7 +174,7 @@ export const SessionView = ({
       </div>
 
       {/* Tile Layout */}
-      <TileLayout chatOpen={chatOpen} />
+      <TileLayout chatOpen={chatOpen} activeSpeaker={activeSpeaker} />
 
       {/* Bottom */}
       <MotionBottom

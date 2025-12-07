@@ -5,7 +5,6 @@ import {
   type TrackReference,
   VideoTrack,
   useLocalParticipant,
-  useTracks,
   useVoiceAssistant,
 } from '@livekit/components-react';
 import { VrmAvatar } from '@/components/avatar/vrm-avatar';
@@ -32,20 +31,17 @@ export function useLocalTrackRef(source: Track.Source) {
 
 interface TileLayoutProps {
   chatOpen: boolean;
+  activeSpeaker?: 'assistant-1' | 'assistant-2';
 }
 
-export function TileLayout({ chatOpen }: TileLayoutProps) {
+export function TileLayout({ chatOpen, activeSpeaker = 'assistant-1' }: TileLayoutProps) {
   const { audioTrack: agentAudioTrack, videoTrack: agentVideoTrack } = useVoiceAssistant();
-  const [screenShareTrack] = useTracks([Track.Source.ScreenShare]);
-  const cameraTrack: TrackReference | undefined = useLocalTrackRef(Track.Source.Camera);
-  const micTrack: TrackReference | undefined = useLocalTrackRef(Track.Source.Microphone);
-
-  const isCameraEnabled = cameraTrack && !cameraTrack.publication.isMuted;
-  const isScreenShareEnabled = screenShareTrack && !screenShareTrack.publication.isMuted;
   const animationDelay = chatOpen ? 0 : 0.15;
   const isAvatar = agentVideoTrack !== undefined;
   const videoWidth = agentVideoTrack?.publication.dimensions?.width ?? 0;
   const videoHeight = agentVideoTrack?.publication.dimensions?.height ?? 0;
+  const assistantOneTrack = activeSpeaker === 'assistant-1' ? agentAudioTrack : undefined;
+  const assistantTwoTrack = activeSpeaker === 'assistant-2' ? agentAudioTrack : undefined;
   const tallTileSize = chatOpen
     ? 'h-[340px] w-[260px] lg:h-[360px] lg:w-[300px] max-w-[360px]'
     : 'h-[440px] w-[320px] lg:h-[460px] lg:w-[340px] max-w-[380px]';
@@ -67,16 +63,16 @@ export function TileLayout({ chatOpen }: TileLayoutProps) {
                 initial={{ opacity: 0, scale: 0.9 }}
                 animate={{ opacity: 1, scale: chatOpen ? 1 : 1.2 }}
                 transition={{ ...ANIMATION_TRANSITION, delay: animationDelay }}
-                className={cn(tileChrome, tallTileSize, 'backdrop-blur-[2px]')}
-              >
-                <VrmAvatar
-                  vrmSrc="/charlotte-1.0.vrm"
-                  audioTrack={agentAudioTrack}
-                  avatarId="assistant"
-                  className="h-full w-full"
-                />
-              </MotionContainer>
-            )}
+            className={cn(tileChrome, tallTileSize, 'backdrop-blur-[2px]')}
+          >
+            <VrmAvatar
+              vrmSrc="/charlotte-1.0.vrm"
+              audioTrack={assistantOneTrack}
+              avatarId="assistant"
+              className="h-full w-full"
+            />
+          </MotionContainer>
+        )}
 
             {isAvatar && (
               <MotionContainer
@@ -120,52 +116,26 @@ export function TileLayout({ chatOpen }: TileLayoutProps) {
 
         {/* Local mic avatar or fallback camera */}
         <div className="flex flex-col items-center gap-2">
-          <AnimatePresence mode="popLayout">
-            {micTrack && (
-              <MotionContainer
-                key="mic-avatar"
-                layoutId="mic-avatar"
-                initial={{ opacity: 0, scale: 0.9 }}
-                animate={{ opacity: 1, scale: chatOpen ? 1 : 1.2 }}
-                transition={{ ...ANIMATION_TRANSITION, delay: animationDelay + 0.05 }}
-                className={cn(tileChrome, tallTileSize, 'backdrop-blur-[2px]')}
-              >
-                <VrmAvatar
-                  vrmSrc="/Ruby.vrm"
-                  audioTrack={micTrack}
-                  allowLocalAudio
-                  rotateY={Math.PI}
-                  mirrorArms
-                  avatarId="local"
-                  scale={0.9}
-                  className="h-full w-full"
-                />
-              </MotionContainer>
-            )}
-
-            {!micTrack && (isCameraEnabled || isScreenShareEnabled) && (
-              <MotionContainer
-                key="camera"
-                layout="position"
-                layoutId="camera"
-                initial={{ opacity: 0, scale: 0 }}
-                animate={{ opacity: 1, scale: 1 }}
-                exit={{ opacity: 0, scale: 0 }}
-                transition={{ ...ANIMATION_TRANSITION, delay: animationDelay }}
-                className="drop-shadow-lg/20"
-              >
-                <VideoTrack
-                  trackRef={cameraTrack || screenShareTrack}
-                  width={(cameraTrack || screenShareTrack)?.publication.dimensions?.width ?? 0}
-                  height={(cameraTrack || screenShareTrack)?.publication.dimensions?.height ?? 0}
-                  className="bg-muted aspect-square w-[120px] rounded-lg object-cover"
-                />
-              </MotionContainer>
-            )}
-          </AnimatePresence>
-          <div className={labelClass}>
-            {micTrack ? 'Assistant 2' : isScreenShareEnabled ? 'Screen share' : 'Camera'}
-          </div>
+          <MotionContainer
+            key="assistant-2"
+            layoutId="assistant-2"
+            initial={{ opacity: 0, scale: 0.9 }}
+            animate={{ opacity: 1, scale: chatOpen ? 1 : 1.2 }}
+            transition={{ ...ANIMATION_TRANSITION, delay: animationDelay + 0.05 }}
+            className={cn(tileChrome, tallTileSize, 'backdrop-blur-[2px]')}
+          >
+            <VrmAvatar
+              vrmSrc="/Ruby.vrm"
+              audioTrack={assistantTwoTrack}
+              allowLocalAudio={false}
+              rotateY={Math.PI}
+              mirrorArms
+              avatarId="assistant-2"
+              scale={0.9}
+              className="h-full w-full"
+            />
+          </MotionContainer>
+          <div className={labelClass}>Assistant 2</div>
         </div>
       </div>
     </div>
