@@ -18,6 +18,8 @@ type VrmAvatarProps = {
 export function VrmAvatar({ vrmSrc, audioTrack, className }: VrmAvatarProps) {
   const mountRef = useRef<HTMLDivElement>(null);
   const setMouthOpenRef = useRef<(v: number) => void>(() => {});
+  const [debugLevel, setDebugLevel] = useState<number>(0);
+  const [debugStatus, setDebugStatus] = useState<string>('idle');
   const [status, setStatus] = useState<'loading' | 'ready' | 'error'>('loading');
 
   useEffect(() => {
@@ -213,19 +215,53 @@ export function VrmAvatar({ vrmSrc, audioTrack, className }: VrmAvatarProps) {
   }, [vrmSrc]);
 
   useEffect(() => {
-    if (!audioTrack?.publication?.track) return;
-    const track = audioTrack.publication.track;
+    const track = audioTrack?.publication?.track;
+    if (!track) return;
+    // Only lip-sync to remote assistant audio, not local mic
+    if (track.participant?.isLocal) return;
     if (track.source !== Track.Source.Audio) return;
 
     let rafId: number | undefined;
     let ctx: AudioContext | undefined;
     let analyser: AnalyserNode | undefined;
     let data: Float32Array | undefined;
+    let frameCount = 0;
 
-    const media = (track.mediaStreamTrack && new MediaStream([track.mediaStreamTrack])) || null;
-    if (!media) return;
+    let audioEl: HTMLAudioElement | null = null;
+    const mediaFromTrack = (track as any).mediaStream;
+    const mediaFromTrackAudio = track.mediaStreamTrack ? new MediaStream([track.mediaStreamTrack]) : null;
+    if ((track as any).attach) {
+      try {
+        audioEl = (track as any).attach();
+        if (audioEl) {
+          audioEl.muted = true;
+          audioEl.volume = 0;
+          audioEl.play().catch(() => {});
+        }
+      } catch (err) {
+        console.warn('[VRM] attach failed', err);
+      }
+    }
+    const media =
+      mediaFromTrack ||
+      mediaFromTrackAudio ||
+      ((audioEl as any)?.srcObject instanceof MediaStream ? (audioEl as any).srcObject : null);
+    if (!media) {
+      console.warn('[VRM] lip sync: no media stream on track', {
+        trackSid: (track as any).sid,
+        participant: track.participant?.identity,
+      });
+      setDebugStatus('no-media');
+      return;
+    }
 
     const setup = async () => {
+      console.info('[VRM] starting lip sync analyser', {
+        trackSid: (track as any).sid,
+        participant: track.participant?.identity,
+        isMuted: (track as any).isMuted,
+      });
+      setDebugStatus('starting');
       ctx = new (window.AudioContext || (window as any).webkitAudioContext)();
       const source = ctx.createMediaStreamSource(media);
       analyser = ctx.createAnalyser();
@@ -262,6 +298,10 @@ export function VrmAvatar({ vrmSrc, audioTrack, className }: VrmAvatarProps) {
           ? target + (envelope - target) * coefAttack
           : target + (envelope - target) * coefRelease;
         setMouthOpenRef.current(Math.min(Math.max(envelope, 0), 1));
+        if (frameCount++ % 10 === 0) {
+          setDebugLevel(Math.min(Math.max(envelope, 0), 1));
+          setDebugStatus(`sid:${(track as any).sid ?? 'n/a'} muted:${(track as any).isMuted ?? 'n/a'}`);
+        }
         rafId = requestAnimationFrame(tick);
       };
       tick();
@@ -273,8 +313,15 @@ export function VrmAvatar({ vrmSrc, audioTrack, className }: VrmAvatarProps) {
       if (rafId) cancelAnimationFrame(rafId);
       analyser?.disconnect();
       if (ctx?.state !== 'closed') ctx?.close();
+      if (audioEl && (track as any).detach) {
+        try {
+          (track as any).detach(audioEl);
+        } catch {
+          // ignore
+        }
+      }
     };
-  }, [audioTrack]);
+  }, [audioTrack?.publication?.track]);
 
   return (
     <div
@@ -287,6 +334,10 @@ export function VrmAvatar({ vrmSrc, audioTrack, className }: VrmAvatarProps) {
           {status === 'loading' ? 'Loading avatar…' : 'Avatar failed to load'}
         </div>
       )}
+      <div className="pointer-events-none absolute left-2 top-2 rounded bg-black/60 px-2 py-1 text-[10px] text-white/70 space-y-0.5">
+        <div>lvl {debugLevel.toFixed(2)}</div>
+        <div>{debugStatus}</div>
+      </div>
     </div>
   );
 }

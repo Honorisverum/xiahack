@@ -128,11 +128,7 @@ export function TileLayout({ chatOpen }: TileLayoutProps) {
                     chatOpen ? 'h-[220px] w-[170px]' : 'h-[360px] w-[260px]'
                   )}
                 >
-                  <VrmAvatar
-                    vrmSrc="/charlotte-1.0.vrm"
-                    audioTrack={agentAudioTrack}
-                    className="h-full w-full"
-                  />
+                  <VrmAvatar vrmSrc="/charlotte-1.0.vrm" audioTrack={agentAudioTrack} className="h-full w-full" />
                 </MotionContainer>
               )}
 
