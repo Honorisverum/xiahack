@@ -670,6 +670,10 @@ async def entrypoint(ctx: agents.JobContext):
         if speaker == "user" and ev.item.content:
             # Track latest user subject to force personas to pivot
             session.current_topic = ev.item.content[0]
+            agent = session.current_agent
+            if isinstance(agent, DebateAgent):
+                # Refresh persona instructions to reflect the new topic immediately
+                asyncio.create_task(agent.update_instructions(agent._build_instructions()))
 
     async def _start_with_topic(resolved_topic: str, user_text: str | None = None):
         personas = generate_debating_personas(resolved_topic, tuple(genders))
