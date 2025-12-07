@@ -406,36 +406,12 @@ wheels = [
 ]
 
 [[package]]
-name = "dialectica-voiceagents"
-version = "0.1.0"
-source = { editable = "." }
-dependencies = [
-    { name = "langchain-xai" },
-    { name = "livekit" },
-    { name = "livekit-agents" },
-    { name = "livekit-plugins-deepgram" },
-    { name = "livekit-plugins-elevenlabs" },
-    { name = "livekit-plugins-noise-cancellation" },
-    { name = "livekit-plugins-openai" },
-    { name = "livekit-plugins-silero" },
-    { name = "livekit-plugins-turn-detector" },
-    { name = "pydantic" },
-    { name = "python-dotenv" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "langchain-xai" },
-    { name = "livekit", specifier = "==1.0.20" },
-    { name = "livekit-agents", specifier = "==1.3.6" },
-    { name = "livekit-plugins-deepgram", specifier = "==1.3.6" },
-    { name = "livekit-plugins-elevenlabs", specifier = "==1.3.6" },
-    { name = "livekit-plugins-noise-cancellation", specifier = "==0.2.5" },
-    { name = "livekit-plugins-openai", specifier = "==1.3.6" },
-    { name = "livekit-plugins-silero", specifier = "==1.3.6" },
-    { name = "livekit-plugins-turn-detector", specifier = "==1.3.6" },
-    { name = "pydantic", specifier = ">=2.0" },
-    { name = "python-dotenv" },
+name = "diskcache"
+version = "5.6.3"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/3f/21/1c1ffc1a039ddcc459db43cc108658f32c57d271d7289a2794e401d0fdb6/diskcache-5.6.3.tar.gz", hash = "sha256:2c3a3fa2743d8535d832ec61c2054a1641f41775aa7c556758a109941e33e4fc", size = 67916, upload-time = "2023-08-31T06:12:00.316Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/3f/27/4570e78fc0bf5ea0ca45eb1de3818a23787af9b390c0b0a0033a1b8236f9/diskcache-5.6.3-py3-none-any.whl", hash = "sha256:5e31b2d5fbad117cc363ebaf6b689474db18a1f6438bc82358b024abd4c2ca19", size = 45550, upload-time = "2023-08-31T06:11:58.822Z" },
 ]
 
 [[package]]
@@ -2698,6 +2674,43 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/86/eb/20b6cdf273913d0ad05a6a14aed4b9a85591c18a987a3d47f20fa13dcc47/websockets-15.0.1-cp313-cp313-win32.whl", hash = "sha256:ba9e56e8ceeeedb2e080147ba85ffcd5cd0711b89576b83784d8605a7df455fa", size = 176393, upload-time = "2025-03-05T20:02:53.814Z" },
     { url = "https://files.pythonhosted.org/packages/1b/6c/c65773d6cab416a64d191d6ee8a8b1c68a09970ea6909d16965d26bfed1e/websockets-15.0.1-cp313-cp313-win_amd64.whl", hash = "sha256:e09473f095a819042ecb2ab9465aee615bd9c2028e4ef7d933600a8401c79561", size = 176837, upload-time = "2025-03-05T20:02:55.237Z" },
     { url = "https://files.pythonhosted.org/packages/fa/a8/5b41e0da817d64113292ab1f8247140aac61cbf6cfd085d6a0fa77f4984f/websockets-15.0.1-py3-none-any.whl", hash = "sha256:f7a866fbc1e97b5c617ee4116daaa09b722101d4a3c170c787450ba409f9736f", size = 169743, upload-time = "2025-03-05T20:03:39.41Z" },
+]
+
+[[package]]
+name = "xaihack"
+version = "0.1.0"
+source = { editable = "." }
+dependencies = [
+    { name = "diskcache" },
+    { name = "langchain-xai" },
+    { name = "livekit" },
+    { name = "livekit-agents" },
+    { name = "livekit-plugins-deepgram" },
+    { name = "livekit-plugins-elevenlabs" },
+    { name = "livekit-plugins-noise-cancellation" },
+    { name = "livekit-plugins-openai" },
+    { name = "livekit-plugins-silero" },
+    { name = "livekit-plugins-turn-detector" },
+    { name = "pydantic" },
+    { name = "python-dotenv" },
+    { name = "tenacity" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "diskcache", specifier = ">=5.6.3" },
+    { name = "langchain-xai" },
+    { name = "livekit", specifier = "==1.0.20" },
+    { name = "livekit-agents", specifier = "==1.3.6" },
+    { name = "livekit-plugins-deepgram", specifier = "==1.3.6" },
+    { name = "livekit-plugins-elevenlabs", specifier = "==1.3.6" },
+    { name = "livekit-plugins-noise-cancellation", specifier = "==0.2.5" },
+    { name = "livekit-plugins-openai", specifier = "==1.3.6" },
+    { name = "livekit-plugins-silero", specifier = "==1.3.6" },
+    { name = "livekit-plugins-turn-detector", specifier = "==1.3.6" },
+    { name = "pydantic", specifier = ">=2.0" },
+    { name = "python-dotenv" },
+    { name = "tenacity", specifier = ">=9.1.2" },
 ]
 
 [[package]]
