@@ -336,8 +336,22 @@ class DebateAgent(Agent):
         except Exception:
             pass  # RpcError can't be pickled, suppress to avoid log serialization crash
 
+    async def _send_data(self, topic: str, payload: Any):
+        """Send data packet to frontend via data channel."""
+        try:
+            room = getattr(getattr(self._session, "_room_io", None), "_room", None)
+            if not room:
+                logging.warning(f"_send_data: no room for topic={topic}")
+                return
+            data = json.dumps(payload)
+            await room.local_participant.publish_data(data.encode("utf-8"), topic=topic)
+            logging.info(f"[Data] Sent {topic}: {payload}")
+        except Exception as e:
+            logging.exception(f"_send_data failed: {e}")
+
     async def on_enter(self):
         asyncio.create_task(self._send_rpc("speaker_changed", {"id": self.persona.id}))
+        asyncio.create_task(self._send_data("speaker-status", {"speaker": self.persona.name, "id": self.persona.id, "isUser": False}))
         if self.first:
             asyncio.create_task(self._send_rpc("personas_created", [
                 {"id": p.id, "name": p.name, "gender": p.gender, "description": p.description}
@@ -407,7 +421,7 @@ class DebateAgent(Agent):
                 speaker = "user"
 
         if speaker.lower() == "user":
-            # Just pass turn to user, agent already prompted them in its reply
+            asyncio.create_task(self._send_data("speaker-status", {"speaker": "user", "id": None, "isUser": True}))
             return None
 
         for p in self.all_personas:

@@ -660,10 +660,6 @@ export function VrmAvatar({
           {status === 'loading' ? 'Loading avatar…' : 'Avatar failed to load'}
         </div>
       )}
-      <div className="pointer-events-none absolute left-2 top-2 rounded bg-black/60 px-2 py-1 text-[10px] text-white/70 space-y-0.5">
-        <div>lvl {debugLevel.toFixed(2)}</div>
-        <div>{debugStatus}</div>
-      </div>
     </div>
   );
 }

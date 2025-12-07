@@ -19,9 +19,6 @@ export const WelcomeView = ({
   ...props
 }: React.ComponentProps<'div'> & WelcomeViewProps) => {
   const displayName = companyName || pageTitle || 'Waifu Think Tank';
-  const descriptionCopy =
-    pageDescription ||
-    'Spin up a Grok-inspired waifu strategist, co-write lore, and iterate on prompts that hit just right. Tap start and the lab routes you straight into the convo loop.';
 
   return (
     <div ref={ref} className="relative isolate w-full" {...props}>
@@ -63,9 +60,11 @@ export const WelcomeView = ({
 
           <div className="space-y-4">
             <h1 className="text-4xl leading-[1.05] font-semibold text-balance text-white md:text-5xl lg:text-6xl">
-              {displayName} is your neon-lit command center for curious, sassy voice agents.
+              {displayName}
             </h1>
-            <p className="text-lg text-pretty text-white/75 md:text-xl">{descriptionCopy}</p>
+            <p className="text-lg text-pretty text-white/75 md:text-xl">
+              AI-powered brainstorm with heated debates on various topics — and ready-to-use action points at the end.
+            </p>
           </div>
 
           <div className="flex flex-wrap items-center gap-3">

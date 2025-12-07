@@ -43,8 +43,8 @@ export function TileLayout({ chatOpen, activeSpeaker = 'assistant-1' }: TileLayo
   const assistantOneTrack = activeSpeaker === 'assistant-1' ? agentAudioTrack : undefined;
   const assistantTwoTrack = activeSpeaker === 'assistant-2' ? agentAudioTrack : undefined;
   const tallTileSize = chatOpen
-    ? 'h-[340px] w-[260px] lg:h-[360px] lg:w-[300px] max-w-[360px]'
-    : 'h-[440px] w-[320px] lg:h-[460px] lg:w-[340px] max-w-[380px]';
+    ? 'h-[380px] w-[290px] lg:h-[400px] lg:w-[330px] max-w-[400px]'
+    : 'h-[500px] w-[360px] lg:h-[540px] lg:w-[400px] max-w-[440px]';
   const tileChrome =
     'overflow-hidden rounded-3xl border border-white/10 bg-gradient-to-br from-[#0d0f1a]/85 via-[#070912]/90 to-[#05060f]/90 shadow-[0_35px_120px_-70px_rgba(0,0,0,0.9)] backdrop-blur-[3px]';
   const labelClass =
@@ -111,7 +111,7 @@ export function TileLayout({ chatOpen, activeSpeaker = 'assistant-1' }: TileLayo
               </MotionContainer>
             )}
           </AnimatePresence>
-          <div className={labelClass}>Assistant 1</div>
+          <div className={labelClass}>Raven</div>
         </div>
 
         {/* Local mic avatar or fallback camera */}
@@ -135,7 +135,7 @@ export function TileLayout({ chatOpen, activeSpeaker = 'assistant-1' }: TileLayo
               className="h-full w-full"
             />
           </MotionContainer>
-          <div className={labelClass}>Assistant 2</div>
+          <div className={labelClass}>Lumi</div>
         </div>
       </div>
     </div>

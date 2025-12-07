@@ -22,7 +22,7 @@ export interface AppConfig {
 export const APP_CONFIG_DEFAULTS: AppConfig = {
   companyName: 'Waifu Think Tank',
   pageTitle: 'Waifu Think Tank',
-  pageDescription: 'A Grok-styled command center for your anime-native voice agent.',
+  pageDescription: 'Waifu Think Tank is your neon-lit command center for curious, sassy voice agents.',
 
   supportsChatInput: true,
   supportsVideoInput: true,

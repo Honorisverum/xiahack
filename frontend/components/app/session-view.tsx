@@ -2,7 +2,7 @@
 
 import React, { useEffect, useRef, useState } from 'react';
 import { DataPacket_Kind, Participant, RoomEvent } from 'livekit-client';
-import { motion } from 'motion/react';
+import { AnimatePresence, motion } from 'motion/react';
 import { useSessionContext, useSessionMessages } from '@livekit/components-react';
 import type { AppConfig } from '@/app-config';
 import { ChatTranscript } from '@/components/app/chat-transcript';
@@ -21,6 +21,12 @@ const MotionBottom = motion.create('div');
 type AvatarToolPayload = {
   call?: Record<string, unknown>;
   [key: string]: unknown;
+};
+
+type SpeakerStatusPayload = {
+  speaker: string;
+  id: number | null;
+  isUser: boolean;
 };
 
 type ToolBridgePayload =
@@ -81,6 +87,7 @@ export const SessionView = ({
   const { messages } = useSessionMessages(session);
   const [chatOpen, setChatOpen] = useState(false);
   const [activeSpeaker, setActiveSpeaker] = useState<'assistant-1' | 'assistant-2'>('assistant-1');
+  const [isUserTurn, setIsUserTurn] = useState(false);
   const lastRemoteMessageIdRef = useRef<string | number | undefined>(undefined);
   const scrollAreaRef = useRef<HTMLDivElement>(null);
   useAvatarToolBridge();
@@ -94,10 +101,20 @@ export const SessionView = ({
       _kind?: DataPacket_Kind,
       topic?: string
     ) => {
-      if (topic !== 'avatar-tool') return;
       try {
         const text = new TextDecoder().decode(payload);
-        const parsedData = JSON.parse(text) as AvatarToolPayload;
+        const parsedData = JSON.parse(text);
+
+        if (topic === 'speaker-status') {
+          const status = parsedData as SpeakerStatusPayload;
+          setIsUserTurn(status.isUser);
+          if (!status.isUser && status.id !== null) {
+            setActiveSpeaker(status.id === 0 ? 'assistant-1' : 'assistant-2');
+          }
+          return;
+        }
+
+        if (topic !== 'avatar-tool') return;
         console.info('[AvatarToolBridge] received data packet', parsedData);
 
         const avatarTools = (
@@ -107,13 +124,19 @@ export const SessionView = ({
         ).__avatarTools;
 
         const toolPayload: ToolBridgePayload =
-          parsedData.call !== undefined
-            ? { tool_calls: [{ function: { arguments: JSON.stringify(parsedData.call) } }] }
+          (parsedData as AvatarToolPayload).call !== undefined
+            ? {
+                tool_calls: [
+                  {
+                    function: { arguments: JSON.stringify((parsedData as AvatarToolPayload).call) },
+                  },
+                ],
+              }
             : parsedData;
 
         avatarTools?.process?.(toolPayload);
       } catch (err) {
-        console.error('[AvatarToolBridge] failed to parse data', err);
+        console.error('[DataReceived] failed to parse data', err);
       }
     };
     room.on(RoomEvent.DataReceived, onData);
@@ -184,6 +207,22 @@ export const SessionView = ({
         {appConfig.isPreConnectBufferEnabled && (
           <PreConnectMessage messages={messages} className="pb-4" />
         )}
+        <AnimatePresence>
+          {isUserTurn && (
+            <motion.div
+              initial={{ opacity: 0, y: 10 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -10 }}
+              className="mb-3 flex items-center justify-center gap-2"
+            >
+              <span className="relative flex h-2.5 w-2.5">
+                <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-75" />
+                <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-emerald-500" />
+              </span>
+              <span className="text-sm font-medium text-emerald-400">Your turn to speak</span>
+            </motion.div>
+          )}
+        </AnimatePresence>
         <div className="relative mx-auto max-w-3xl rounded-[28px] border border-white/10 bg-white/[0.06] px-2 pt-2 pb-4 shadow-[0_20px_90px_-55px_rgba(0,0,0,0.9)] backdrop-blur-2xl md:pb-10">
           <Fade bottom className="absolute inset-x-4 top-0 h-6 -translate-y-full" />
           <AgentControlBar
