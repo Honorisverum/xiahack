@@ -215,11 +215,33 @@ export function VrmAvatar({ vrmSrc, audioTrack, className }: VrmAvatarProps) {
   }, [vrmSrc]);
 
   useEffect(() => {
-    const track = audioTrack?.publication?.track;
-    if (!track) return;
+    if (!audioTrack) {
+      setDebugStatus('no-ref');
+      return;
+    }
+    if (!audioTrack.publication) {
+      setDebugStatus('no-publication');
+      return;
+    }
+    const track = audioTrack.publication.track;
+    if (!track) {
+      setDebugStatus('no-track');
+      return;
+    }
     // Only lip-sync to remote assistant audio, not local mic
-    if (track.participant?.isLocal) return;
-    if (track.source !== Track.Source.Audio) return;
+    if (track.participant?.isLocal) {
+      setDebugStatus('local-track');
+      return;
+    }
+    const isAudioKind =
+      (track as any).kind === 'audio' ||
+      (track.mediaStreamTrack && track.mediaStreamTrack.kind === 'audio') ||
+      track.source === Track.Source.Audio ||
+      track.source === Track.Source.Microphone;
+    if (!isAudioKind) {
+      setDebugStatus(`non-audio:${track.source}`);
+      return;
+    }
 
     let rafId: number | undefined;
     let ctx: AudioContext | undefined;
@@ -300,7 +322,11 @@ export function VrmAvatar({ vrmSrc, audioTrack, className }: VrmAvatarProps) {
         setMouthOpenRef.current(Math.min(Math.max(envelope, 0), 1));
         if (frameCount++ % 10 === 0) {
           setDebugLevel(Math.min(Math.max(envelope, 0), 1));
-          setDebugStatus(`sid:${(track as any).sid ?? 'n/a'} muted:${(track as any).isMuted ?? 'n/a'}`);
+          setDebugStatus(
+            `sid:${(track as any).sid ?? 'n/a'} muted:${(track as any).isMuted ?? 'n/a'} pubMuted:${
+              audioTrack.publication.isMuted ?? 'n/a'
+            } src:${track.source}`
+          );
         }
         rafId = requestAnimationFrame(tick);
       };
