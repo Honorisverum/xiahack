@@ -12,11 +12,19 @@ from pydantic import BaseModel, Field
 from tenacity import retry, stop_after_attempt
 
 from livekit import agents
-from livekit.agents import AgentSession, Agent, ChatMessage, ChatContext, room_io, function_tool, RunContext
+from livekit.agents import AgentSession, Agent, ChatMessage, ChatContext, room_io, function_tool, RunContext, ToolError
 from livekit.agents.llm import ChatContent  # noqa
 from livekit.plugins import openai, silero, noise_cancellation
 from xaitts import TTS as XaiTTS
 from livekit.plugins.turn_detector.english import EnglishModel as EnglishTurnDetector
+from research import research_agent, EventType
+
+
+# DROCH
+# - [ ] voices
+# - [ ] prompts
+# - [ ] logic
+# - [ ] demo scenarios
 
 
 class DebateChatMessage(ChatMessage):
@@ -61,6 +69,33 @@ React emotionally to user's messages:
 ## Formatting Rules
 - before each other participant's response, you will see the speaker's name in the following format: "$speaker_name says$". 
 Does't mention it in your response, it is just hidden info. Don't add to your reply.
+
+## Hot Takes — Debate Deliverables
+
+The Hot Takes list below is the SHARED OUTPUT of this debate.
+All participants can see it. It persists after the debate ends.
+
+Your job: make this list sharp, true, and worth reading.
+
+Tools:
+- `add_hot_take` — add a new insight that emerged from the debate
+- `replace_hot_take` — sharpen, correct, or merge an existing take
+- `delete_hot_take` — remove if redundant, wrong, or superseded
+
+Rules:
+- MAX 4 hot takes. If at limit, replace or delete before adding.
+- Always announce what you're doing: "I'm adding...", "Let me sharpen that to...", "Removing the redundant one..."
+
+When to act:
+- You or someone made a point that crystallizes into a take → add it
+- A take is vague, weak, or you found a better framing → replace it
+- Two takes say the same thing → merge into one, delete the other
+- A take got demolished in debate → delete it
+
+Quality bar: Would you tweet this? If not, refine or cut.
+
+Current Hot Takes:
+{hot_takes}
 """
 
 REPLY_INSTRUCTIONS = """
@@ -69,6 +104,16 @@ Continue the debate:
 - Bring a fresh perspective based on your role
 - Be constructive but challenge ideas
 """
+
+RESEARCH_FINDINGS_PROMPT = """
+
+## 🔬 Your Fresh Research Findings
+You just completed research. SHARE THIS in your next response:
+🔥 {take}
+
+{explanation}
+
+Start your response by presenting this finding to the group!"""
 
 TURN_TOOL_DESCRIPTION = """
 Transition to the next speaker. Choose based on:
@@ -112,6 +157,9 @@ class PersonaSchema(BaseModel):
     name: str = Field(description="Human first name matching gender (e.g. Sarah, Marcus)")
     prompt: str = Field(description="System prompt for LLM: persona's stance on topic, argumentation style, rhetorical tactics (3-5 sentences)")
     description: str = Field(description="Public bio for UI: who they are, what shaped their view (1 sentence)")
+
+
+MAX_HOT_TAKES = 4
 
 
 class DebatePersonasSchema(BaseModel):
@@ -167,23 +215,47 @@ class DebateAgent(Agent):
         persona: Persona,
         all_personas: list[Persona],
         session: AgentSession,
+        hot_takes: list[str],
         first: bool = False,
     ):
         self.topic = topic
         self.persona = persona
         self.all_personas = all_personas
         self._session = session
+        self.hot_takes = hot_takes
         self.first = first
 
         super().__init__(
-            instructions=AGENT_INSTRUCTIONS.format(
-                persona_name=persona.name,
-                topic=topic,
-                persona_prompt=persona.prompt,
-                other_personas=", ".join([p.name for p in all_personas if p.name != persona.name]) + ", and User",
-            ),
-            tts=XaiTTS(voice=VOICES[persona.gender][persona.id % 3].lower()),
+            instructions=self._build_instructions(),
+            tts=XaiTTS(voice=self._session.voices[persona.id]),
         )
+
+    def _hot_takes_to_prompt(self) -> str:
+        if not self.hot_takes:
+            return "(none yet)"
+        return "\n".join(f"- {t}" for t in self.hot_takes)
+
+    def _build_instructions(self) -> str:
+        instructions = AGENT_INSTRUCTIONS.format(
+            persona_name=self.persona.name,
+            topic=self.topic,
+            persona_prompt=self.persona.prompt,
+            other_personas=", ".join([p.name for p in self.all_personas if p.name != self.persona.name and p.id not in self._session.researching_agents]) + ", and User",
+            hot_takes=self._hot_takes_to_prompt(),
+        )
+        
+        # Add research results if this agent has fresh findings
+        if my_research := self._session.research_results.get(self.persona.id):
+            instructions += RESEARCH_FINDINGS_PROMPT.format(
+                take=my_research['take'],
+                explanation=my_research['explanation'],
+            )
+        
+        return instructions
+
+    async def _refresh_instructions(self):
+        """Update instructions after hot takes change."""
+        await self.update_instructions(self._build_instructions())
 
     def _reformat_history(self, chat_ctx: ChatContext) -> ChatContext:
         """Reformat history so current agent sees others as 'user' role. Returns a copy."""
@@ -203,22 +275,27 @@ class DebateAgent(Agent):
         return formatted
 
     @retry(stop=stop_after_attempt(3), reraise=True)
-    async def _notify_speaker_change(self):
-        """Notify frontend about speaker change via RPC."""
+    async def _send_rpc(self, method: str, payload: Any):
+        """Send RPC to frontend client."""
         if self._session._room_io is None:
-            return  # Console mode - no room available
+            return
         room = self._session._room_io._room
         if not room or not room.remote_participants:
             return
         client_identity = next(iter(room.remote_participants.keys()))
         await room.local_participant.perform_rpc(
             destination_identity=client_identity,
-            method="speaker_changed",
-            payload=json.dumps({"id": self.persona.id}),
+            method=method,
+            payload=json.dumps(payload),
         )
 
     async def on_enter(self):
-        await self._notify_speaker_change()
+        asyncio.create_task(self._send_rpc("speaker_changed", {"id": self.persona.id}))
+        if self.first:
+            asyncio.create_task(self._send_rpc("personas_created", [
+                {"id": p.id, "name": p.name, "gender": p.gender, "description": p.description}
+                for p in self.all_personas
+            ]))
 
         await self.update_chat_ctx(self._reformat_history(self._session.history))
         print(self.chat_ctx.items)
@@ -246,6 +323,15 @@ class DebateAgent(Agent):
         except RuntimeError as e:
             logging.warning("generate_reply skipped after user turn: %s", e)
 
+    @function_tool(name="emoji_reaction", description="Express your character's current emotion with a single emoji")
+    async def emoji_reaction(
+        self,
+        context: RunContext,
+        emoji: Annotated[str, "A single valid emoji character (e.g. 😂, 🔥, 👏, 🤔, 👎)"],
+    ):
+        await self._send_rpc("emoji_reaction", {"emoji": emoji, "speaker_id": self.persona.id})
+        return None
+
     @function_tool(name="give_turn_to_next_speaker", description=TURN_TOOL_DESCRIPTION)
     async def next_speaker(
         self,
@@ -258,21 +344,13 @@ class DebateAgent(Agent):
 
         for p in self.all_personas:
             if p.name.lower() == speaker.lower():
-                async def _handoff():
-                    # Wait for the current turn to finish before swapping agents to avoid
-                    # scheduling while the session is draining.
-                    await context.wait_for_playout()
-                    self._session.update_agent(
-                        DebateAgent(
-                            topic=self.topic,
-                            persona=p,
-                            all_personas=self.all_personas,
-                            session=self._session,
-                        )
-                    )
-
-                asyncio.create_task(_handoff())
-                return None
+                return DebateAgent(
+                    topic=self.topic,
+                    persona=p,
+                    all_personas=self.all_personas,
+                    session=self._session,
+                    hot_takes=self.hot_takes,
+                )
 
         # fallback: stay as current
         return None
@@ -327,6 +405,99 @@ class DebateAgent(Agent):
         except Exception as e:
             logging.exception("avatar_tool publish failed")
             return {"status": "error", "message": str(e)}
+    @function_tool(name="add_hot_take", description="Add a new hot take to the shared list")
+    async def add_hot_take(
+        self,
+        context: RunContext,
+        text: Annotated[str, "The hot take text — sharp, tweetable insight from the debate"],
+    ):
+        if text in self.hot_takes:
+            raise ToolError(f"Hot take already exists: '{text}'")
+        if len(self.hot_takes) >= MAX_HOT_TAKES:
+            raise ToolError(f"Limit reached ({MAX_HOT_TAKES}). Replace or delete first.")
+        self.hot_takes.append(text)
+        logging.info(f"[{self.persona.name}] ADD hot take: {text}")
+        await self._refresh_instructions()
+        asyncio.create_task(self._send_rpc("hot_takes_updated", {"takes": list(self.hot_takes)}))
+        return "Added"
+
+    @function_tool(name="replace_hot_take", description="Replace an existing hot take with a refined version")
+    async def replace_hot_take(
+        self,
+        context: RunContext,
+        old_text: Annotated[str, "Exact text of the hot take to replace"],
+        new_text: Annotated[str, "New refined text"],
+    ):
+        if old_text not in self.hot_takes:
+            raise ToolError(f"Hot take not found: '{old_text}'")
+        idx = self.hot_takes.index(old_text)
+        self.hot_takes[idx] = new_text
+        logging.info(f"[{self.persona.name}] REPLACE hot take: '{old_text}' → '{new_text}'")
+        await self._refresh_instructions()
+        asyncio.create_task(self._send_rpc("hot_takes_updated", {"takes": list(self.hot_takes)}))
+        return "Replaced"
+
+    @function_tool(name="delete_hot_take", description="Delete a hot take from the shared list")
+    async def delete_hot_take(
+        self,
+        context: RunContext,
+        text: Annotated[str, "Exact text of the hot take to delete"],
+    ):
+        if text not in self.hot_takes:
+            raise ToolError(f"Hot take not found: '{text}'")
+        self.hot_takes.remove(text)
+        logging.info(f"[{self.persona.name}] DELETE hot take: {text}")
+        await self._refresh_instructions()
+        asyncio.create_task(self._send_rpc("hot_takes_updated", {"takes": list(self.hot_takes)}))
+        return "Deleted"
+
+    # @function_tool(name="dig_deeper", description="Research a topic when debate lacks facts or is stuck. You will leave to research and return with findings.")
+    # async def dig_deeper(
+    #     self,
+    #     context: RunContext,
+    #     query: Annotated[str, "What to research - be specific about what facts/data you need"],
+    #     hand_off_to: Annotated[str, "Name of participant to continue debate while you research"],
+    # ):
+    #     logging.info(f"[{self.persona.name}] Starting research: {query}, handing off to {hand_off_to}")
+    #     self._session.researching_agents.add(self.persona.id)
+    #     asyncio.create_task(self._run_research(query))
+    #     # Hand off to another agent
+    #     for p in self.all_personas:
+    #         if p.name.lower() == hand_off_to.lower():
+    #             self._session.say(f"Let me dig deeper on this. {hand_off_to}, take it from here - I'll be back with what I find.")
+    #             return DebateAgent(
+    #                 topic=self.topic,
+    #                 persona=p,
+    #                 all_personas=self.all_personas,
+    #                 session=self._session,
+    #                 hot_takes=self.hot_takes,
+    #             )
+    #     # Fallback: hand to user
+    #     self._session.say("Let me research this. What do you think in the meantime?")
+    #     return None
+
+    async def _run_research(self, query: str):
+        """Run research in background, send RPC updates, store results."""
+        async for event in research_agent(query):
+            await self._send_rpc("research_status", {
+                "agent_id": self.persona.id,
+                "agent_name": self.persona.name,
+                "type": event.type.value,
+                "data": event.data,
+            })
+            
+            if event.type == EventType.DONE:
+                self._session.research_results[self.persona.id] = event.data
+                self._session.researching_agents.discard(self.persona.id)
+                logging.info(f"[{self.persona.name}] Research complete: {event.data['take'][:100]}")
+                await self._refresh_instructions()
+                
+                # Notify that agent is back with findings
+                await self._send_rpc("agent_returned", {
+                    "agent_id": self.persona.id,
+                    "agent_name": self.persona.name,
+                    "has_findings": True,
+                })
 
 
 server = agents.AgentServer()
@@ -336,7 +507,8 @@ server = agents.AgentServer()
 async def entrypoint(ctx: agents.JobContext):
     metadata: dict[str, Any] = json.loads(ctx.job.metadata or '{}')
     topic = metadata.get("topic", "What is the best way to solve global warming?")
-    genders: list[str] = metadata.get("genders", ["male", "female"])
+    genders: list[str] = metadata.get("genders", ["female", "female"])
+    voices: list[str] = ["eve", "ara"]
 
     logging.info(f"Starting session with {topic=} and {genders=}")
     personas = generate_debating_personas(topic, tuple(genders))
@@ -353,6 +525,9 @@ async def entrypoint(ctx: agents.JobContext):
         vad=silero.VAD.load(),
         turn_detection=EnglishTurnDetector(),
     )
+    session.research_results = {}  # {persona_id: {take, explanation, image_url}}
+    session.researching_agents = set()  # persona_ids currently researching
+    session.voices = voices  # voice per persona by id
 
     @session.on("conversation_item_added")
     def conversation_item_added(ev: agents.ConversationItemAddedEvent):
@@ -367,6 +542,7 @@ async def entrypoint(ctx: agents.JobContext):
             persona=next(iter(personas)),
             all_personas=personas,
             session=session,
+            hot_takes=[],
             first=True,
         ),
         room_options=room_io.RoomOptions(
