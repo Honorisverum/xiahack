@@ -2694,6 +2694,7 @@ dependencies = [
     { name = "pydantic" },
     { name = "python-dotenv" },
     { name = "tenacity" },
+    { name = "websockets" },
 ]
 
 [package.metadata]
@@ -2711,6 +2712,7 @@ requires-dist = [
     { name = "pydantic", specifier = ">=2.0" },
     { name = "python-dotenv" },
     { name = "tenacity", specifier = ">=9.1.2" },
+    { name = "websockets", specifier = ">=12.0" },
 ]
 
 [[package]]

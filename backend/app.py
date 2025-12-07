@@ -14,6 +14,7 @@ from livekit import agents
 from livekit.agents import AgentSession, Agent, ChatMessage, ChatContext, room_io, function_tool, RunContext
 from livekit.agents.llm import ChatContent  # noqa
 from livekit.plugins import openai, silero, noise_cancellation
+from xaitts import TTS as XaiTTS
 from livekit.plugins.turn_detector.english import EnglishModel as EnglishTurnDetector
 
 
@@ -155,12 +156,7 @@ class DebateAgent(Agent):
                 persona_prompt=persona.prompt,
                 other_personas=", ".join([p.name for p in all_personas if p.name != persona.name]) + ", and User",
             ),
-            tts=openai.TTS(
-                base_url="https://api.x.ai/v1",
-                api_key=os.environ.get("XAI_API_KEY"),
-                voice=VOICES[persona.gender][persona.id % 3],
-                model="tts-1",
-            ),
+            tts=XaiTTS(voice=VOICES[persona.gender][persona.id % 3].lower()),
         )
 
     def _reformat_history(self, chat_ctx: ChatContext) -> ChatContext:
@@ -183,8 +179,10 @@ class DebateAgent(Agent):
     @retry(stop=stop_after_attempt(3), reraise=True)
     async def _notify_speaker_change(self):
         """Notify frontend about speaker change via RPC."""
+        if self._session._room_io is None:
+            return  # Console mode - no room available
         room = self._session._room_io._room
-        if not room.remote_participants:
+        if not room or not room.remote_participants:
             return
         client_identity = next(iter(room.remote_participants.keys()))
         await room.local_participant.perform_rpc(
