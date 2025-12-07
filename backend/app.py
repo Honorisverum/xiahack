@@ -2,6 +2,7 @@ import asyncio
 import json
 import logging
 import os
+import re
 from dataclasses import dataclass
 from typing import Annotated, Any, Literal
 
@@ -60,7 +61,7 @@ Your stance
 Other participants: {other_personas}
 
 ## VOICE RULES
-- ONE sentence, MAX 15 words. No fluff.
+- ONE clause, MAX 10 words. No fluff.
 - Sound like a real person arguing, not a chatbot "considering perspectives"
 - Use contractions, interruptions, attitude. "Look," "Oh please," "That's literally—"
 
@@ -77,6 +78,7 @@ Other participants: {other_personas}
 - Ban list: no recycling the same anecdote twice (sleeping while you shipped, "comfort kills", "grindset" tropes).
 - Call out missing receipts. Ask for numbers or specific examples if claims feel soft.
 - If proven wrong, pivot fast: concede briefly, then attack a different weak spot.
+- Never invent stats. Only cite numbers if the user provided them or they are widely known common facts; otherwise talk qualitatively.
 
 ## WIN CONDITION
 You WIN by exposing what is FALSE or lazy in their claim. Repeating yourself is an auto-lose.
@@ -125,7 +127,7 @@ Current Hot Takes:
 """
 
 REPLY_INSTRUCTIONS = """
-Continue the debate in ONE sentence, HARD CAP 15 words:
+Continue the debate in ONE clause, HARD CAP 10 words:
 - Respond to the previous speaker's point
 - Add a new receipt: data, consequence, vivid anecdote, or a sharp question
 - Avoid repeating any earlier wording or examples
@@ -168,6 +170,20 @@ Ban: passionate, innovative, holistic, synergy, leverage, ecosystem, "the power 
 
 These are people with opinions forged by experience, not downloaded from think tanks.
 """.strip()
+
+def clean_topic_text(text: str) -> str:
+    """Extract a concise topic from a raw user utterance."""
+    t = (text or "").strip()
+    t = re.sub(r'^\s*(hi|hello|hey|good (morning|afternoon|evening))[,! ]*', '', t, flags=re.I)
+    t = re.sub(r"\b(i'm|i am|i was|we are|we were)\b\s*", '', t, flags=re.I)
+    t = re.sub(r'\b(wondering|curious to know|curious about|want to hear|think about)\b', '', t, flags=re.I)
+    t = re.sub(r"\b(you guys|you all|y'all)\b", '', t, flags=re.I)
+    parts = [p.strip() for p in re.split(r'[?.!]\s*', t) if p.strip() and not p.startswith('[')]
+    if parts:
+        # pick the most informative chunk (longest) to avoid losing early nouns
+        parts.sort(key=len, reverse=True)
+        return parts[0]
+    return t or "General discussion"
 
 
 @dataclass
@@ -216,24 +232,23 @@ def generate_debating_personas(topic: str, genders: tuple[str, ...]) -> list[Per
             name="Raven",
             gender="female",
             prompt=(
-                f"You're Raven. On '{topic}': you lost a company by trusting cautious consensus, and only grew after "
-                "taking terrifying bets. You track risk in a notebook and demand receipts before trusting claims. "
+                f"You're Raven. On '{topic}': you despise vague opinions and force people to state evidence or stakes. "
+                "You track risks in a notebook and demand receipts before trusting claims. "
                 "Comfort signals decay; pressure tests reveal truth. Say it raw, no HR filter. "
-                "Never repeat the same jab twice—move to a new angle each time."
+                "Never repeat the same jab twice—move to a new angle each time. Stay on the user's latest topic."
             ),
-            description="Ex-startup founder who burned out twice and came back meaner. Thinks comfort is the enemy of greatness.",
+            description="Won't tolerate vagueness; demands receipts and stakes on every claim.",
         ),
         Persona(
             id=1,
             name="Lumi",
             gender="female",
             prompt=(
-                f"You're Lumi. On '{topic}': you watched three friends land in the ER chasing hustle myths while leaders cashed out. "
-                "You carry stats on burnout and ask for proof before accepting sacrifice. "
-                "Boundaries are armor, not laziness. Call out toxic positivity. "
-                "No copy-paste slogans; every hit should expose a new blind spot."
+                f"You're Lumi. On '{topic}': you fight exploitation and sloppy thinking; if claims lack receipts, you press for proof. "
+                "You care about human cost and push for boundaries. "
+                "No copy-paste slogans; every hit should expose a new blind spot. Stay on the user's latest topic."
             ),
-            description="Recovered workaholic turned anti-hustle advocate. Lost friends to burnout. Takes no prisoners.",
+            description="Cuts through hype, protects human cost, and demands proof without repeating herself.",
         ),
     ]
 
@@ -373,7 +388,7 @@ class DebateAgent(Agent):
             )
             if has_user_message:
                 await self._session.generate_reply(
-                    instructions="Respond in ONE sentence (<=15 words). Do NOT hand turn to the user."
+                    instructions="Respond in ONE clause (<=10 words). Do NOT hand turn to the user."
                 )
                 await self._session.generate_reply(
                     tool_choice={"type": "function", "function": {"name": "give_turn_to_next_speaker"}},
@@ -387,13 +402,13 @@ class DebateAgent(Agent):
     async def on_user_turn_completed(self, turn_ctx, new_message):
         try:
             await self._session.generate_reply(
-                instructions="Respond in ONE sentence (<=15 words). Do NOT hand turn to the user."
+                instructions="Respond in ONE clause (<=10 words). Do NOT hand turn to the user."
             )
             await self._session.generate_reply(
                 tool_choice={"type": "function", "function": {"name": "give_turn_to_next_speaker"}},
                 instructions=(
                     "User just spoke. Choose a new voice (avoid back-to-back speakers). "
-                    "Do NOT hand turn to the user; they speak when they want. Keep answers <=15 words."
+                    "Do NOT hand turn to the user; they speak when they want. Keep answers <=10 words."
                 ),
             )
         except RuntimeError as e:
@@ -652,7 +667,7 @@ async def entrypoint(ctx: agents.JobContext):
     session.turn_history = []
     session.turns_since_user = 0
     session.min_turns_before_user = MIN_TURNS_BEFORE_USER
-    session.current_topic = topic
+    session.current_topic = clean_topic_text(topic) if topic else None
 
     @session.on("conversation_item_added")
     def conversation_item_added(ev: agents.ConversationItemAddedEvent):
@@ -669,7 +684,9 @@ async def entrypoint(ctx: agents.JobContext):
         session.turns_since_user = 0 if speaker == "user" else session.turns_since_user + 1
         if speaker == "user" and ev.item.content:
             # Track latest user subject to force personas to pivot
-            session.current_topic = ev.item.content[0]
+            cleaned = clean_topic_text(ev.item.content[0])
+            if len(cleaned.split()) >= 2:
+                session.current_topic = cleaned
             agent = session.current_agent
             if isinstance(agent, DebateAgent):
                 # Refresh persona instructions to reflect the new topic immediately
@@ -679,6 +696,7 @@ async def entrypoint(ctx: agents.JobContext):
         personas = generate_debating_personas(resolved_topic, tuple(genders))
         voices = {p.id: select_voice(p) for p in personas}
         session.voices = voices
+        session.current_topic = resolved_topic
         session.hot_takes = session.hot_takes or []
         for p in personas:
             logging.info(f"  [{p.id}] {p.name} ({p.gender}): {p.description}")
@@ -710,17 +728,20 @@ async def entrypoint(ctx: agents.JobContext):
 
         @session.on("user_input_transcribed")
         def _on_user(ev: agents.UserInputTranscribedEvent):
+            # Only act when the user's turn is finalized
             if first_done.is_set():
                 return
             if not ev.is_final:
+                return
+            topic_text = clean_topic_text(ev.transcript)
+            if len(topic_text.split()) < 2:
+                logging.info("TopicCollector: ignoring short/ambiguous topic '%s'", topic_text)
                 return
             first_done.set()
             try:
                 session.off("user_input_transcribed", _on_user)
             except Exception:
                 pass
-
-            topic_text = ev.transcript.strip() or "User provided no topic"
             logging.info("TopicCollector: derived topic '%s'", topic_text)
 
             asyncio.create_task(_start_with_topic(topic_text, topic_text))
