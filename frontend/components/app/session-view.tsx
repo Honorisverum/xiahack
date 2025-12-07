@@ -7,6 +7,7 @@ import type { AppConfig } from '@/app-config';
 import { ChatTranscript } from '@/components/app/chat-transcript';
 import { PreConnectMessage } from '@/components/app/preconnect-message';
 import { TileLayout } from '@/components/app/tile-layout';
+import { useAvatarToolBridge } from '@/hooks/useAvatarToolBridge';
 import {
   AgentControlBar,
   type ControlBarControls,
@@ -68,6 +69,7 @@ export const SessionView = ({
   const { messages } = useSessionMessages(session);
   const [chatOpen, setChatOpen] = useState(false);
   const scrollAreaRef = useRef<HTMLDivElement>(null);
+  useAvatarToolBridge();
 
   const controls: ControlBarControls = {
     leave: true,

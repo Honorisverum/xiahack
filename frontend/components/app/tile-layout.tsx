@@ -68,7 +68,12 @@ export function TileLayout({ chatOpen }: TileLayoutProps) {
                 transition={{ ...ANIMATION_TRANSITION, delay: animationDelay }}
                 className={cn(tileChrome, tallTileSize, 'backdrop-blur-[2px]')}
               >
-                <VrmAvatar vrmSrc="/charlotte-1.0.vrm" audioTrack={agentAudioTrack} className="h-full w-full" />
+                <VrmAvatar
+                  vrmSrc="/charlotte-1.0.vrm"
+                  audioTrack={agentAudioTrack}
+                  avatarId="assistant"
+                  className="h-full w-full"
+                />
               </MotionContainer>
             )}
 
@@ -127,6 +132,7 @@ export function TileLayout({ chatOpen }: TileLayoutProps) {
                   allowLocalAudio
                   rotateY={Math.PI}
                   mirrorArms
+                  avatarId="local"
                   scale={0.9}
                   className="h-full w-full"
                 />

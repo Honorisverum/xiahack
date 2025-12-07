@@ -15,6 +15,7 @@ type VrmAvatarProps = {
   rotateY?: number;
   scale?: number;
   mirrorArms?: boolean;
+  avatarId?: string;
 };
 
 /**
@@ -29,6 +30,7 @@ export function VrmAvatar({
   rotateY = 0,
   scale = 1,
   mirrorArms = false,
+  avatarId,
 }: VrmAvatarProps) {
   const mountRef = useRef<HTMLDivElement>(null);
   const setMouthOpenRef = useRef<(v: number) => void>(() => {});
@@ -39,6 +41,7 @@ export function VrmAvatar({
   const { state: assistantState } = useVoiceAssistant();
   const vowelPresetRef = useRef<'Aa' | 'Ih' | 'Ou'>('Aa');
   const vowelUntilRef = useRef<number>(0);
+  const expressionRef = useRef<{ preset: string; level: number; until: number } | null>(null);
 
   useEffect(() => {
     if (!mountRef.current) return;
@@ -410,6 +413,28 @@ export function VrmAvatar({
         }
 
         applyProceduralIdle(delta);
+        // Handle tool-driven expression overlays
+        if (currentVrm?.expressionManager && expressionRef.current) {
+          const nowMs = performance.now();
+          const { preset, level, until } = expressionRef.current;
+          const remaining = until - nowMs;
+          if (remaining <= 0) {
+            expressionRef.current = null;
+          } else {
+            const weight = Math.min(level, remaining / 800); // fade out near the end
+            if (preset === 'smile') {
+              currentVrm.expressionManager.setValue(VRMExpressionPresetName.Happy, weight);
+            } else if (preset === 'surprised') {
+              currentVrm.expressionManager.setValue(VRMExpressionPresetName.Surprised, weight);
+            } else if (preset === 'concerned') {
+              currentVrm.expressionManager.setValue(VRMExpressionPresetName.Sad, weight * 0.6);
+            } else if (preset === 'wink') {
+              currentVrm.expressionManager.setValue(VRMExpressionPresetName.Blink, weight);
+            } else if (preset === 'laugh') {
+              currentVrm.expressionManager.setValue(VRMExpressionPresetName.Happy, weight);
+            }
+          }
+        }
         if (currentVrm?.lookAt) {
           lookTarget.position.set(gazeOffset.x * 0.5, 1.35 + gazeOffset.y * 0.35, 0.6);
         }
@@ -600,6 +625,29 @@ export function VrmAvatar({
     vowelPresetRef.current = preset;
     vowelUntilRef.current = performance.now() + 180;
   }, [assistantState?.lastTranscription?.text]);
+
+  // Bridge: respond to tool-driven expressions (setExpression) for this avatarId
+  useEffect(() => {
+    const onToolApply = (ev: Event) => {
+      const detail = (ev as CustomEvent<any>).detail;
+      if (!detail || typeof detail !== 'object') return;
+      const { type, context } = detail;
+      if (avatarId && context?.avatarId && context.avatarId !== avatarId) return;
+      if (type === 'setExpression' && detail.preset) {
+        const now = performance.now();
+        expressionRef.current = {
+          preset: detail.preset,
+          level: typeof detail.level === 'number' ? detail.level : 1,
+          until: now + (detail.durationMs ?? 2000),
+        };
+        console.info('[VRM] expression applied', avatarId ?? 'any', expressionRef.current);
+      }
+    };
+    window.addEventListener('avatar-tool-apply', onToolApply as EventListener);
+    return () => {
+      window.removeEventListener('avatar-tool-apply', onToolApply as EventListener);
+    };
+  }, [avatarId]);
 
   return (
     <div

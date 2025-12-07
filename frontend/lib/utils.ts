@@ -7,6 +7,7 @@ import type { AppConfig } from '@/app-config';
 
 export const CONFIG_ENDPOINT = process.env.NEXT_PUBLIC_APP_CONFIG_ENDPOINT;
 export const SANDBOX_ID = process.env.SANDBOX_ID;
+export const isBrowser = () => typeof window !== 'undefined';
 
 export interface SandboxConfig {
   [key: string]:
