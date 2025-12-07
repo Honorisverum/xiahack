@@ -55,6 +55,7 @@ Rules:
 - Stay in character
 - Address others by name when responding to them
 - Keep your unique position and come up with smart arguments against other participants.
+- The conversation starts with a user message; respond to it first before debating others.
 - To animate the avatars, call the function tool `avatar_tool` only with supported expressions:
   * setExpression preset: "smile", "surprised", "concerned", "wink", or "laugh"
   * Include context.avatarId as "assistant" or "local"
@@ -168,14 +169,13 @@ class DebatePersonasSchema(BaseModel):
 
 class AvatarToolCall(BaseModel):
     """LLM → UI animation instruction."""
+    model_config = ConfigDict(extra="allow")
+
     type: str = Field(description="Tool type, e.g., setExpression, setPose, setGaze")
     preset: str | None = Field(default=None, description="Expression preset when type is setExpression")
     context: dict[str, Any] | None = Field(
         default=None, description='Optional targeting, e.g., {"avatarId": "assistant" | "local"}'
     )
-
-    class Config:
-        extra = "allow"
 
 
 
@@ -300,17 +300,20 @@ class DebateAgent(Agent):
         await self.update_chat_ctx(self._reformat_history(self._session.history))
         print(self.chat_ctx.items)
         try:
-            if self.first:
+            has_user_message = any(
+                isinstance(item, DebateChatMessage) and item.role == "user"
+                for item in self._session.history.items
+            )
+            if has_user_message:
                 await self._session.generate_reply(
-                    instructions=f"Introduce yourself briefly and share your opening position on: {self.topic}"
+                    instructions="Respond directly to the user's opening message and set the tone for the debate."
+                )
+                await self._session.generate_reply(
+                    tool_choice={"type": "function", "function": {"name": "give_turn_to_next_speaker"}},
+                    instructions="Now decide who should speak next.",
                 )
             else:
-                await self._session.generate_reply(instructions=REPLY_INSTRUCTIONS)
-
-            await self._session.generate_reply(
-                tool_choice={"type": "function", "function": {"name": "give_turn_to_next_speaker"}},
-                instructions="Now decide who should speak next.",
-            )
+                logging.info("Waiting for initial user input before responding")
         except RuntimeError as e:
             logging.warning("generate_reply skipped (agent not running): %s", e)
 
@@ -339,7 +342,11 @@ class DebateAgent(Agent):
         speaker: Annotated[str, "Name of next speaker: one of the other participants or 'user'"],
     ):
         if speaker.lower() == "user":
-            self._session.say("What do you think?")
+            async def _prompt_user():
+                await context.wait_for_playout()
+                self._session.say("What do you think?")
+
+            asyncio.create_task(_prompt_user())
             return None
 
         for p in self.all_personas:
@@ -500,20 +507,56 @@ class DebateAgent(Agent):
                 })
 
 
+class TopicCollectorAgent(Agent):
+    """Temporary agent to capture the first user utterance and derive the debate topic."""
+
+    def __init__(self, genders: list[str], session: AgentSession):
+        self.genders = genders
+        self._session = session
+        self._handoff_done = False
+        super().__init__(instructions="Wait silently for the user's first message; do not respond.", tts=None)
+
+    async def on_enter(self):
+        logging.info("TopicCollector: waiting for first user utterance")
+
+    async def on_user_turn_completed(self, turn_ctx, new_message):
+        if self._handoff_done:
+            return
+        text = new_message.text_content or (new_message.content[0] if new_message.content else "")
+        topic = text.strip() or "User provided no topic"
+        self._handoff_done = True
+        logging.info("TopicCollector: derived topic '%s'", topic)
+        personas = generate_debating_personas(topic, tuple(self.genders))
+        for p in personas:
+            logging.info(f"  [{p.id}] {p.name} ({p.gender}): {p.description}")
+        self._session.update_agent(
+            DebateAgent(
+                topic=topic,
+                persona=next(iter(personas)),
+                all_personas=personas,
+                session=self._session,
+                first=True,
+            )
+        )
+
+
 server = agents.AgentServer()
 
 
 @server.rtc_session()
 async def entrypoint(ctx: agents.JobContext):
     metadata: dict[str, Any] = json.loads(ctx.job.metadata or '{}')
+<<<<<<< HEAD
     topic = metadata.get("topic", "What is the best way to solve global warming?")
     genders: list[str] = metadata.get("genders", ["female", "female"])
     voices: list[str] = ["eve", "ara"]
+=======
+    topic = metadata.get("topic")
+    genders: list[str] = metadata.get("genders", ["male", "female"])
+>>>>>>> eb72e28 (Implement TopicCollectorAgent and enhance debate flow)
 
     logging.info(f"Starting session with {topic=} and {genders=}")
-    personas = generate_debating_personas(topic, tuple(genders))
-    for p in personas:
-        logging.info(f"  [{p.id}] {p.name} ({p.gender}): {p.description}")
+    personas: list[Persona] | None = None
 
     session = AgentSession(
         llm=openai.LLM.with_x_ai(model="grok-4-1-fast-non-reasoning"),
@@ -531,8 +574,11 @@ async def entrypoint(ctx: agents.JobContext):
 
     @session.on("conversation_item_added")
     def conversation_item_added(ev: agents.ConversationItemAddedEvent):
-        agent: DebateAgent = session.current_agent
-        speaker = agent.persona.name if ev.item.role == "assistant" else "user"
+        agent = session.current_agent
+        if isinstance(agent, DebateAgent):
+            speaker = agent.persona.name if ev.item.role == "assistant" else "user"
+        else:
+            speaker = "user" if ev.item.role == "user" else "assistant"
         session.history.items[-1] = DebateChatMessage(**ev.item.model_dump(), speaker=speaker)
 
     await session.start(
