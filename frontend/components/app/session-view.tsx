@@ -182,12 +182,15 @@ export const SessionView = ({
       {/* Chat Transcript */}
       <div
         className={cn(
-          'fixed inset-0 grid grid-cols-1 grid-rows-1',
+          'fixed left-0 right-0 top-0 h-[45%] md:h-[50%] grid grid-cols-1 grid-rows-1',
           !chatOpen && 'pointer-events-none'
         )}
       >
         <Fade top className="absolute inset-x-4 top-0 h-40" />
-        <ScrollArea ref={scrollAreaRef} className="px-4 pt-40 pb-[150px] md:px-6 md:pb-[200px]">
+        <ScrollArea
+          ref={scrollAreaRef}
+          className="mx-auto h-full max-w-5xl px-4 pt-40 pb-6 md:px-6"
+        >
           <ChatTranscript
             hidden={!chatOpen}
             messages={messages}

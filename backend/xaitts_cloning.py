@@ -170,7 +170,7 @@ class VoiceCloneStream(tts.ChunkedStream):
                 "instructions": "audio",
                 "voice": voice_b64 or "None",
                 "sampling_params": {
-                    "max_new_tokens": 512,
+                    "max_new_tokens": 1024,
                     "temperature": 1.0,
                     "min_p": 0.01,
                 },

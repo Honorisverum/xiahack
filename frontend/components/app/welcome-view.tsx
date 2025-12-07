@@ -30,8 +30,8 @@ export const WelcomeView = ({
         <div className="absolute inset-0 [background-image:radial-gradient(circle_at_1px_1px,rgba(255,255,255,0.35),transparent_0)] [background-size:36px_36px] [opacity:.15]" />
       </div>
 
-      <section className="relative mx-auto flex min-h-[78svh] max-w-6xl flex-col gap-10 px-4 py-10 md:px-10 md:py-14 lg:px-16">
-        <header className="flex flex-col gap-6 border-b border-white/10 pb-8">
+      <section className="relative mx-auto flex min-h-[90svh] w-full max-w-[1400px] flex-col gap-12 px-6 py-14 md:px-16 md:py-18 lg:px-24">
+        <header className="flex flex-col gap-7 border-b border-white/10 pb-10">
           <div className="flex items-center gap-4">
             <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-gradient-to-br from-[#ff52d9] via-[#8d6bff] to-[#79e8ff] shadow-lg shadow-fuchsia-500/30">
               <Image
@@ -52,27 +52,27 @@ export const WelcomeView = ({
           </div>
         </header>
 
-        <div className="space-y-8">
-          <div className="inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/5 px-4 py-2 text-[11px] font-semibold tracking-[0.28em] text-white/80 uppercase shadow-[0_15px_70px_-40px_rgba(121,232,255,0.8)]">
+        <div className="space-y-12">
+          <div className="inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/5 px-5 py-2.5 text-[11px] font-semibold tracking-[0.3em] text-white/80 uppercase shadow-[0_20px_80px_-50px_rgba(121,232,255,0.9)]">
             <span className="h-1.5 w-1.5 rounded-full bg-gradient-to-r from-[#ff52d9] to-[#79e8ff]" />
             Grok attitude, anime brain
           </div>
 
-          <div className="space-y-4">
-            <h1 className="text-4xl leading-[1.05] font-semibold text-balance text-white md:text-5xl lg:text-6xl">
+          <div className="space-y-6">
+            <h1 className="text-5xl leading-[1.02] font-semibold text-balance text-white md:text-6xl lg:text-7xl xl:text-8xl">
               {displayName}
             </h1>
-            <p className="text-lg text-pretty text-white/75 md:text-xl">
+            <p className="max-w-4xl text-xl text-pretty text-white/80 md:text-2xl">
               AI-powered brainstorm with heated debates on various topics — and ready-to-use action points at the end.
             </p>
           </div>
 
-          <div className="flex flex-wrap items-center gap-3">
+          <div className="flex flex-wrap items-center gap-4">
             <Button
               variant="primary"
               size="lg"
               onClick={onStartCall}
-              className="h-12 rounded-full bg-gradient-to-r from-[#ff52d9] via-[#8d6bff] to-[#79e8ff] px-8 text-sm font-bold tracking-[0.25em] text-[#0b0c11] uppercase shadow-[0_25px_70px_-35px_rgba(255,82,217,0.9)] transition hover:scale-[1.02] hover:shadow-[0_30px_90px_-40px_rgba(121,232,255,1)]"
+              className="h-16 rounded-full bg-gradient-to-r from-[#ff52d9] via-[#8d6bff] to-[#79e8ff] px-12 text-base font-bold tracking-[0.22em] text-[#0b0c11] uppercase shadow-[0_28px_80px_-40px_rgba(255,82,217,0.95)] transition hover:scale-[1.02] hover:shadow-[0_34px_100px_-45px_rgba(121,232,255,1)]"
             >
               {startButtonText}
             </Button>
@@ -80,7 +80,7 @@ export const WelcomeView = ({
               variant="secondary"
               size="lg"
               asChild
-              className="h-12 rounded-full border border-white/20 bg-white/5 px-6 text-xs font-semibold tracking-[0.18em] text-white/80 hover:bg-white/10"
+              className="h-16 rounded-full border border-white/20 bg-white/5 px-8 text-sm font-semibold tracking-[0.18em] text-white/85 hover:bg-white/10"
             >
               <a
                 href="https://docs.livekit.io/agents/start/voice-ai/"
