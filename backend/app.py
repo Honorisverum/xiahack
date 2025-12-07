@@ -3,12 +3,12 @@ import json
 import logging
 import os
 from dataclasses import dataclass
-from typing import Annotated, Any, Literal
+from typing import Annotated, Any, Literal, Callable, Awaitable
 
 from diskcache import Cache
 from dotenv import load_dotenv
 from langchain_xai import ChatXAI
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ConfigDict
 from tenacity import retry, stop_after_attempt
 
 from livekit import agents
@@ -17,8 +17,13 @@ from livekit.agents.llm import ChatContent  # noqa
 from livekit.plugins import openai, silero, noise_cancellation
 from xaitts import TTS as XaiTTS
 from livekit.plugins.turn_detector.english import EnglishModel as EnglishTurnDetector
-from research import research_agent, EventType
 
+
+# Helper to assign voices per persona id by gender
+def select_voice(persona: "Persona") -> str:
+    options = VOICES.get(persona.gender, [])
+    return options[persona.id % len(options)].lower() if options else "eve"
+from research import research_agent, EventType
 
 # DROCH
 # - [ ] voices
@@ -215,25 +220,24 @@ class DebateAgent(Agent):
         persona: Persona,
         all_personas: list[Persona],
         session: AgentSession,
-        hot_takes: list[str],
         first: bool = False,
     ):
         self.topic = topic
         self.persona = persona
         self.all_personas = all_personas
         self._session = session
-        self.hot_takes = hot_takes
         self.first = first
 
         super().__init__(
             instructions=self._build_instructions(),
-            tts=XaiTTS(voice=self._session.voices[persona.id]),
+            tts=XaiTTS(voice=self._session.voices.get(persona.id, select_voice(persona))),
         )
 
     def _hot_takes_to_prompt(self) -> str:
-        if not self.hot_takes:
+        takes = self._session.hot_takes
+        if not takes:
             return "(none yet)"
-        return "\n".join(f"- {t}" for t in self.hot_takes)
+        return "\n".join(f"- {t}" for t in takes)
 
     def _build_instructions(self) -> str:
         instructions = AGENT_INSTRUCTIONS.format(
@@ -356,7 +360,6 @@ class DebateAgent(Agent):
                     persona=p,
                     all_personas=self.all_personas,
                     session=self._session,
-                    hot_takes=self.hot_takes,
                 )
 
         # fallback: stay as current
@@ -418,14 +421,15 @@ class DebateAgent(Agent):
         context: RunContext,
         text: Annotated[str, "The hot take text — sharp, tweetable insight from the debate"],
     ):
-        if text in self.hot_takes:
+        takes = self._session.hot_takes
+        if text in takes:
             raise ToolError(f"Hot take already exists: '{text}'")
-        if len(self.hot_takes) >= MAX_HOT_TAKES:
+        if len(takes) >= MAX_HOT_TAKES:
             raise ToolError(f"Limit reached ({MAX_HOT_TAKES}). Replace or delete first.")
-        self.hot_takes.append(text)
+        takes.append(text)
         logging.info(f"[{self.persona.name}] ADD hot take: {text}")
         await self._refresh_instructions()
-        asyncio.create_task(self._send_rpc("hot_takes_updated", {"takes": list(self.hot_takes)}))
+        asyncio.create_task(self._send_rpc("hot_takes_updated", {"takes": list(takes)}))
         return "Added"
 
     @function_tool(name="replace_hot_take", description="Replace an existing hot take with a refined version")
@@ -435,13 +439,14 @@ class DebateAgent(Agent):
         old_text: Annotated[str, "Exact text of the hot take to replace"],
         new_text: Annotated[str, "New refined text"],
     ):
-        if old_text not in self.hot_takes:
+        takes = self._session.hot_takes
+        if old_text not in takes:
             raise ToolError(f"Hot take not found: '{old_text}'")
-        idx = self.hot_takes.index(old_text)
-        self.hot_takes[idx] = new_text
+        idx = takes.index(old_text)
+        takes[idx] = new_text
         logging.info(f"[{self.persona.name}] REPLACE hot take: '{old_text}' → '{new_text}'")
         await self._refresh_instructions()
-        asyncio.create_task(self._send_rpc("hot_takes_updated", {"takes": list(self.hot_takes)}))
+        asyncio.create_task(self._send_rpc("hot_takes_updated", {"takes": list(takes)}))
         return "Replaced"
 
     @function_tool(name="delete_hot_take", description="Delete a hot take from the shared list")
@@ -450,12 +455,13 @@ class DebateAgent(Agent):
         context: RunContext,
         text: Annotated[str, "Exact text of the hot take to delete"],
     ):
-        if text not in self.hot_takes:
+        takes = self._session.hot_takes
+        if text not in takes:
             raise ToolError(f"Hot take not found: '{text}'")
-        self.hot_takes.remove(text)
+        takes.remove(text)
         logging.info(f"[{self.persona.name}] DELETE hot take: {text}")
         await self._refresh_instructions()
-        asyncio.create_task(self._send_rpc("hot_takes_updated", {"takes": list(self.hot_takes)}))
+        asyncio.create_task(self._send_rpc("hot_takes_updated", {"takes": list(takes)}))
         return "Deleted"
 
     # @function_tool(name="dig_deeper", description="Research a topic when debate lacks facts or is stuck. You will leave to research and return with findings.")
@@ -508,36 +514,13 @@ class DebateAgent(Agent):
 
 
 class TopicCollectorAgent(Agent):
-    """Temporary agent to capture the first user utterance and derive the debate topic."""
+    """Temporary agent that stays silent while we wait for the first user utterance."""
 
-    def __init__(self, genders: list[str], session: AgentSession):
-        self.genders = genders
-        self._session = session
-        self._handoff_done = False
+    def __init__(self):
         super().__init__(instructions="Wait silently for the user's first message; do not respond.", tts=None)
 
     async def on_enter(self):
         logging.info("TopicCollector: waiting for first user utterance")
-
-    async def on_user_turn_completed(self, turn_ctx, new_message):
-        if self._handoff_done:
-            return
-        text = new_message.text_content or (new_message.content[0] if new_message.content else "")
-        topic = text.strip() or "User provided no topic"
-        self._handoff_done = True
-        logging.info("TopicCollector: derived topic '%s'", topic)
-        personas = generate_debating_personas(topic, tuple(self.genders))
-        for p in personas:
-            logging.info(f"  [{p.id}] {p.name} ({p.gender}): {p.description}")
-        self._session.update_agent(
-            DebateAgent(
-                topic=topic,
-                persona=next(iter(personas)),
-                all_personas=personas,
-                session=self._session,
-                first=True,
-            )
-        )
 
 
 server = agents.AgentServer()
@@ -546,18 +529,10 @@ server = agents.AgentServer()
 @server.rtc_session()
 async def entrypoint(ctx: agents.JobContext):
     metadata: dict[str, Any] = json.loads(ctx.job.metadata or '{}')
-<<<<<<< HEAD
-    topic = metadata.get("topic", "What is the best way to solve global warming?")
-    genders: list[str] = metadata.get("genders", ["female", "female"])
-    voices: list[str] = ["eve", "ara"]
-=======
     topic = metadata.get("topic")
     genders: list[str] = metadata.get("genders", ["male", "female"])
->>>>>>> eb72e28 (Implement TopicCollectorAgent and enhance debate flow)
 
     logging.info(f"Starting session with {topic=} and {genders=}")
-    personas: list[Persona] | None = None
-
     session = AgentSession(
         llm=openai.LLM.with_x_ai(model="grok-4-1-fast-non-reasoning"),
         stt=openai.STT(
@@ -570,7 +545,8 @@ async def entrypoint(ctx: agents.JobContext):
     )
     session.research_results = {}  # {persona_id: {take, explanation, image_url}}
     session.researching_agents = set()  # persona_ids currently researching
-    session.voices = voices  # voice per persona by id
+    session.voices = {}
+    session.hot_takes = []
 
     @session.on("conversation_item_added")
     def conversation_item_added(ev: agents.ConversationItemAddedEvent):
@@ -581,21 +557,78 @@ async def entrypoint(ctx: agents.JobContext):
             speaker = "user" if ev.item.role == "user" else "assistant"
         session.history.items[-1] = DebateChatMessage(**ev.item.model_dump(), speaker=speaker)
 
-    await session.start(
-        room=ctx.room,
-        agent=DebateAgent(
-            topic=topic,
-            persona=next(iter(personas)),
-            all_personas=personas,
-            session=session,
-            hot_takes=[],
-            first=True,
-        ),
-        room_options=room_io.RoomOptions(
-            audio_input=room_io.AudioInputOptions(noise_cancellation=noise_cancellation.BVC()),
-            audio_output=room_io.AudioOutputOptions(sample_rate=44100),
-        ),
-    )
+    async def _start_with_topic(resolved_topic: str, user_text: str | None = None):
+        personas = generate_debating_personas(resolved_topic, tuple(genders))
+        voices = {p.id: select_voice(p) for p in personas}
+        session.voices = voices
+        session.hot_takes = session.hot_takes or []
+        for p in personas:
+            logging.info(f"  [{p.id}] {p.name} ({p.gender}): {p.description}")
+        if user_text:
+            session.history.items.append(
+                DebateChatMessage(role="user", content=[user_text], speaker="user")
+            )
+        session.update_agent(
+            DebateAgent(
+                topic=resolved_topic,
+                persona=next(iter(personas)),
+                all_personas=personas,
+                session=session,
+                first=True,
+            )
+        )
+        if getattr(session, "_update_activity_atask", None):
+            try:
+                await asyncio.shield(session._update_activity_atask)
+            except Exception:
+                logging.exception("Error while waiting for agent handoff")
+
+    if topic:
+        logging.info(f"Starting session with topic from metadata: {topic} and {genders=}")
+        personas = generate_debating_personas(topic, tuple(genders))
+        session.voices = {p.id: select_voice(p) for p in personas}
+        session.hot_takes = session.hot_takes or []
+        for p in personas:
+            logging.info(f"  [{p.id}] {p.name} ({p.gender}): {p.description}")
+        await session.start(
+            room=ctx.room,
+            agent=DebateAgent(
+                topic=topic,
+                persona=next(iter(personas)),
+                all_personas=personas,
+                session=session,
+                first=True,
+            ),
+            room_options=room_io.RoomOptions(
+                audio_input=room_io.AudioInputOptions(noise_cancellation=noise_cancellation.BVC()),
+                audio_output=room_io.AudioOutputOptions(sample_rate=44100),
+            ),
+        )
+    else:
+        logging.info("No topic in metadata; starting TopicCollectorAgent to derive from user speech")
+        first_done = asyncio.Event()
+
+        @session.on("user_input_transcribed")
+        def _on_user(ev: agents.UserInputTranscribedEvent):
+            if not ev.is_final or first_done.is_set():
+                return
+            first_done.set()
+            try:
+                session.off("user_input_transcribed", _on_user)
+            except Exception:
+                pass
+            topic_text = ev.transcript.strip() or "User provided no topic"
+            logging.info("TopicCollector: derived topic '%s'", topic_text)
+            asyncio.create_task(_start_with_topic(topic_text, topic_text))
+
+        await session.start(
+            room=ctx.room,
+            agent=TopicCollectorAgent(),
+            room_options=room_io.RoomOptions(
+                audio_input=room_io.AudioInputOptions(noise_cancellation=noise_cancellation.BVC()),
+                audio_output=room_io.AudioOutputOptions(sample_rate=44100),
+            ),
+        )
 
 
 if __name__ == "__main__":
