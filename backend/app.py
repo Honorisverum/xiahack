@@ -186,6 +186,7 @@ class PersonaSchema(BaseModel):
 
 
 MAX_HOT_TAKES = 4
+MIN_TURNS_BEFORE_USER = 2  # encourage agents to volley before returning to the user
 
 
 class DebatePersonasSchema(BaseModel):
@@ -370,7 +371,10 @@ class DebateAgent(Agent):
             )
             if has_user_message:
                 await self._session.generate_reply(
-                    instructions="Respond in ONE sentence (<=15 words), then call give_turn_to_next_speaker."
+                    instructions=(
+                        "Respond in ONE sentence (<=15 words), then call give_turn_to_next_speaker. "
+                        "Do NOT hand turn to the user; they'll speak when ready."
+                    )
                 )
             else:
                 logging.info("Waiting for initial user input before responding")
@@ -382,8 +386,8 @@ class DebateAgent(Agent):
             await self._session.generate_reply(
                 tool_choice={"type": "function", "function": {"name": "give_turn_to_next_speaker"}},
                 instructions=(
-                    "User just spoke. Choose a new voice (avoid back-to-back speakers) or return to user next. "
-                    "Keep answers <=15 words."
+                    "User just spoke. Choose a new voice (avoid back-to-back speakers). "
+                    "Do NOT hand turn to the user; they speak when they want. Keep answers <=15 words."
                 ),
             )
         except RuntimeError as e:
@@ -406,6 +410,15 @@ class DebateAgent(Agent):
     ):
         last = getattr(self._session, "last_speaker", None)
         recent = list(getattr(self._session, "turn_history", [])[-2:])
+        turns_since_user = getattr(self._session, "turns_since_user", 0)
+        min_turns_before_user = getattr(self._session, "min_turns_before_user", 0)
+
+        # Never proactively hand to the user; they speak when they want.
+        if speaker.lower() == "user":
+            speaker = next(
+                (p.name for p in self.all_personas if p.name.lower() != (last or "").lower()),
+                self.all_personas[0].name,
+            )
 
         # Prevent back-to-back from the same voice unless it's the user.
         if last and speaker.lower() == last.lower() and speaker.lower() != "user":
@@ -420,6 +433,7 @@ class DebateAgent(Agent):
                 # If no alt, ask the user to weigh in.
                 speaker = "user"
 
+        # Keep agents volleying; user speaks only when they jump in.
         if speaker.lower() == "user":
             asyncio.create_task(self._send_data("speaker-status", {"speaker": "user", "id": None, "isUser": True}))
             return None
@@ -629,6 +643,8 @@ async def entrypoint(ctx: agents.JobContext):
     session.hot_takes = []
     session.last_speaker = None
     session.turn_history = []
+    session.turns_since_user = 0
+    session.min_turns_before_user = MIN_TURNS_BEFORE_USER
 
     @session.on("conversation_item_added")
     def conversation_item_added(ev: agents.ConversationItemAddedEvent):
@@ -642,6 +658,7 @@ async def entrypoint(ctx: agents.JobContext):
         session.turn_history.append(speaker)
         if len(session.turn_history) > 50:
             session.turn_history = session.turn_history[-50:]
+        session.turns_since_user = 0 if speaker == "user" else session.turns_since_user + 1
 
     async def _start_with_topic(resolved_topic: str, user_text: str | None = None):
         personas = generate_debating_personas(resolved_topic, tuple(genders))

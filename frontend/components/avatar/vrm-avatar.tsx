@@ -492,8 +492,15 @@ export function VrmAvatar({
       setDebugStatus('no-track');
       return;
     }
+    const participant = audioTrack.participant ?? audioTrack.publication?.participant ?? track.participant;
+    if (!participant && !allowLocalAudio) {
+      setDebugStatus('no-participant');
+      return;
+    }
+    const isLocal = participant?.isLocal ?? false;
+    const participantId = participant?.identity ?? 'unknown';
     // Only lip-sync to remote audio unless allowLocalAudio is true
-    if (!allowLocalAudio && track.participant?.isLocal) {
+    if (!allowLocalAudio && isLocal) {
       setDebugStatus('local-track');
       return;
     }
@@ -544,10 +551,10 @@ export function VrmAvatar({
     const setup = async () => {
       console.info('[VRM] starting lip sync analyser', {
         trackSid: (track as any).sid,
-        participant: track.participant?.identity,
+        participant: participantId,
         isMuted: (track as any).isMuted,
       });
-      setDebugStatus('starting');
+      setDebugStatus(`starting:${participantId}`);
       ctx = new (window.AudioContext || (window as any).webkitAudioContext)();
       const source = ctx.createMediaStreamSource(media);
       analyser = ctx.createAnalyser();
