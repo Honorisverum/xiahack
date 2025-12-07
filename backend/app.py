@@ -71,8 +71,14 @@ Other participants: {other_personas}
 - Find the hole in their logic and drive through it.
 - Personal experience > abstract theory. "I've SEEN this fail" beats "studies suggest"
 
+## TRUTH-SEEKING & ANTI-REPETITION
+- Every reply must add a fresh fact, consequence, or challenge; never rephrase your last line.
+- Ban list: no recycling the same anecdote twice (sleeping while you shipped, "comfort kills", "grindset" tropes).
+- Call out missing receipts. Ask for numbers or specific examples if claims feel soft.
+- If proven wrong, pivot fast: concede briefly, then attack a different weak spot.
+
 ## WIN CONDITION
-You WIN by making opponent look wrong — not just different. This is combat, not collaboration.
+You WIN by exposing what is FALSE or lazy in their claim. Repeating yourself is an auto-lose.
 
 Example energy:
 - "Balance? That's what people say when they've given up."
@@ -120,7 +126,8 @@ Current Hot Takes:
 REPLY_INSTRUCTIONS = """
 Continue the debate in ONE sentence, HARD CAP 15 words:
 - Respond to the previous speaker's point
-- Bring a fresh perspective based on your role
+- Add a new receipt: data, consequence, vivid anecdote, or a sharp question
+- Avoid repeating any earlier wording or examples
 - Be constructive but challenge ideas
 """
 
@@ -136,9 +143,9 @@ Start your response by presenting this finding to the group!"""
 
 TURN_TOOL_DESCRIPTION = """
 Transition to the next speaker. Choose based on:
-1. Who hasn't spoken recently
-2. Who might have opposing view
-3. Give user a chance to participate
+1. Avoid back-to-back from the same speaker (keep the volley moving)
+2. Prioritize someone who hasn't spoken recently and can clash with the last point
+3. Give the user a turn regularly; pull them in with a direct question
 """
 
 PERSONA_GENERATION_PROMPT = """
@@ -207,9 +214,10 @@ def generate_debating_personas(topic: str, genders: tuple[str, ...]) -> list[Per
             name="Raven",
             gender="female",
             prompt=(
-                f"You're Raven. On '{topic}': you've seen what happens when people play it safe — mediocrity. "
-                "Comfort is the enemy. Growth comes from discomfort. Say it raw, no HR filter. "
-                "Mock the weak takes. Call out the cope."
+                f"You're Raven. On '{topic}': you lost a company by trusting cautious consensus, and only grew after "
+                "taking terrifying bets. You track risk in a notebook and demand receipts before trusting claims. "
+                "Comfort signals decay; pressure tests reveal truth. Say it raw, no HR filter. "
+                "Never repeat the same jab twice—move to a new angle each time."
             ),
             description="Ex-startup founder who burned out twice and came back meaner. Thinks comfort is the enemy of greatness.",
         ),
@@ -218,10 +226,10 @@ def generate_debating_personas(topic: str, genders: tuple[str, ...]) -> list[Per
             name="Lumi",
             gender="female",
             prompt=(
-                f"You're Lumi. On '{topic}': you've watched the hustle cult destroy people while CEOs got rich. "
-                "The system sells 'passion' to exploit you. Rest is resistance. Boundaries aren't weakness — "
-                "they're how you don't end up a cautionary tale on LinkedIn. "
-                "Call out toxic positivity. Drag the grindset propaganda."
+                f"You're Lumi. On '{topic}': you watched three friends land in the ER chasing hustle myths while leaders cashed out. "
+                "You carry stats on burnout and ask for proof before accepting sacrifice. "
+                "Boundaries are armor, not laziness. Call out toxic positivity. "
+                "No copy-paste slogans; every hit should expose a new blind spot."
             ),
             description="Recovered workaholic turned anti-hustle advocate. Lost friends to burnout. Takes no prisoners.",
         ),
@@ -359,7 +367,10 @@ class DebateAgent(Agent):
         try:
             await self._session.generate_reply(
                 tool_choice={"type": "function", "function": {"name": "give_turn_to_next_speaker"}},
-                instructions="User just spoke. Decide who should respond. Keep answers <=15 words.",
+                instructions=(
+                    "User just spoke. Choose a new voice (avoid back-to-back speakers) or return to user next. "
+                    "Keep answers <=15 words."
+                ),
             )
         except RuntimeError as e:
             logging.warning("generate_reply skipped after user turn: %s", e)
@@ -379,6 +390,22 @@ class DebateAgent(Agent):
         context: RunContext,
         speaker: Annotated[str, "Name of next speaker: one of the other participants or 'user'"],
     ):
+        last = getattr(self._session, "last_speaker", None)
+        recent = list(getattr(self._session, "turn_history", [])[-2:])
+
+        # Prevent back-to-back from the same voice unless it's the user.
+        if last and speaker.lower() == last.lower() and speaker.lower() != "user":
+            alt = next(
+                (p for p in self.all_personas if p.name.lower() != last.lower() and p.name not in recent),
+                None,
+            )
+            if alt:
+                logging.info("Redirecting turn from %s to %s to avoid repeats", speaker, alt.name)
+                speaker = alt.name
+            else:
+                # If no alt, ask the user to weigh in.
+                speaker = "user"
+
         if speaker.lower() == "user":
             # Just pass turn to user, agent already prompted them in its reply
             return None
@@ -586,6 +613,8 @@ async def entrypoint(ctx: agents.JobContext):
     session.researching_agents = set()  # persona_ids currently researching
     session.voices = {}
     session.hot_takes = []
+    session.last_speaker = None
+    session.turn_history = []
 
     @session.on("conversation_item_added")
     def conversation_item_added(ev: agents.ConversationItemAddedEvent):
@@ -595,6 +624,10 @@ async def entrypoint(ctx: agents.JobContext):
         else:
             speaker = "user" if ev.item.role == "user" else "assistant"
         session.history.items[-1] = DebateChatMessage(**ev.item.model_dump(), speaker=speaker)
+        session.last_speaker = speaker
+        session.turn_history.append(speaker)
+        if len(session.turn_history) > 50:
+            session.turn_history = session.turn_history[-50:]
 
     async def _start_with_topic(resolved_topic: str, user_text: str | None = None):
         personas = generate_debating_personas(resolved_topic, tuple(genders))
