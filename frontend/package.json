@@ -20,6 +20,7 @@
     "buffer-image-size": "^0.6.4",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
+    "@pixiv/three-vrm": "^3.2.0",
     "jose": "^6.0.12",
     "livekit-client": "^2.15.15",
     "livekit-server-sdk": "^2.13.2",
@@ -30,7 +31,8 @@
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
     "sonner": "^2.0.7",
-    "tailwind-merge": "^3.3.0"
+    "tailwind-merge": "^3.3.0",
+    "three": "^0.170.0"
   },
   "devDependencies": {
     "@eslint/eslintrc": "^3",

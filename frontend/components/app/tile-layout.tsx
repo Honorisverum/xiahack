@@ -9,6 +9,7 @@ import {
   useTracks,
   useVoiceAssistant,
 } from '@livekit/components-react';
+import { VrmAvatar } from '@/components/avatar/vrm-avatar';
 import { cn } from '@/lib/utils';
 
 const MotionContainer = motion.create('div');
@@ -106,42 +107,32 @@ export function TileLayout({ chatOpen }: TileLayoutProps) {
           >
             <AnimatePresence mode="popLayout">
               {!isAvatar && (
-                // Audio Agent
+                // Avatar driven by agent audio
                 <MotionContainer
                   key="agent"
                   layoutId="agent"
                   initial={{
                     opacity: 0,
-                    scale: 0,
+                    scale: 0.9,
                   }}
                   animate={{
                     opacity: 1,
-                    scale: chatOpen ? 1 : 5,
+                    scale: chatOpen ? 1 : 1.6,
                   }}
                   transition={{
                     ...ANIMATION_TRANSITION,
                     delay: animationDelay,
                   }}
                   className={cn(
-                    'bg-background aspect-square h-[90px] rounded-md border border-transparent transition-[border,drop-shadow]',
-                    chatOpen && 'border-input/50 drop-shadow-lg/10 delay-200'
+                    'overflow-hidden rounded-xl border border-input/50 bg-gradient-to-br from-slate-900/80 via-black/80 to-slate-950/80 drop-shadow-xl/60',
+                    chatOpen ? 'h-[220px] w-[170px]' : 'h-[360px] w-[260px]'
                   )}
                 >
-                  <BarVisualizer
-                    barCount={5}
-                    state={agentState}
-                    options={{ minHeight: 5 }}
-                    trackRef={agentAudioTrack}
-                    className={cn('flex h-full items-center justify-center gap-1')}
-                  >
-                    <span
-                      className={cn([
-                        'bg-muted min-h-2.5 w-2.5 rounded-full',
-                        'origin-center transition-colors duration-250 ease-linear',
-                        'data-[lk-highlighted=true]:bg-foreground data-[lk-muted=true]:bg-muted',
-                      ])}
-                    />
-                  </BarVisualizer>
+                  <VrmAvatar
+                    vrmSrc="/charlotte-1.0.vrm"
+                    audioTrack={agentAudioTrack}
+                    className="h-full w-full"
+                  />
                 </MotionContainer>
               )}
 
